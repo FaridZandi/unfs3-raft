@@ -56,6 +56,7 @@
 #include "daemon.h"
 #include "backend.h"
 #include "Config/exports.h"
+#include "raft_log.h"
 
 #ifndef SIG_PF
 #define SIG_PF void(*)(int)
@@ -415,6 +416,7 @@ void daemon_exit(int error)
 
     remove_pid_file();
     backend_shutdown();
+    raft_log_close();
 
     exit(1);
 }
@@ -614,6 +616,72 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
         return;
     }
     result = (*local) ((char *) &argument, rqstp);
+
+    /* Create log entry for modifying operations */
+    switch (rqstp->rq_proc) {
+        case NFSPROC3_WRITE: {
+            char *path = fh_decomp(argument.nfsproc3_write_3_arg.file);
+            raft_log("WRITE %s %llu %u", path ? path : "?",
+                     (unsigned long long)argument.nfsproc3_write_3_arg.offset,
+                     (unsigned int)argument.nfsproc3_write_3_arg.count);
+            break;
+        }
+        case NFSPROC3_CREATE: {
+            char *path = fh_decomp(argument.nfsproc3_create_3_arg.where.dir);
+            raft_log("CREATE %s/%s", path ? path : "?",
+                     argument.nfsproc3_create_3_arg.where.name);
+            break;
+        }
+        case NFSPROC3_MKDIR: {
+            char *path = fh_decomp(argument.nfsproc3_mkdir_3_arg.where.dir);
+            raft_log("MKDIR %s/%s", path ? path : "?",
+                     argument.nfsproc3_mkdir_3_arg.where.name);
+            break;
+        }
+        case NFSPROC3_SYMLINK: {
+            char *path = fh_decomp(argument.nfsproc3_symlink_3_arg.where.dir);
+            raft_log("SYMLINK %s/%s", path ? path : "?",
+                     argument.nfsproc3_symlink_3_arg.where.name);
+            break;
+        }
+        case NFSPROC3_MKNOD: {
+            char *path = fh_decomp(argument.nfsproc3_mknod_3_arg.where.dir);
+            raft_log("MKNOD %s/%s", path ? path : "?",
+                     argument.nfsproc3_mknod_3_arg.where.name);
+            break;
+        }
+        case NFSPROC3_REMOVE: {
+            char *path = fh_decomp(argument.nfsproc3_remove_3_arg.object.dir);
+            raft_log("REMOVE %s/%s", path ? path : "?",
+                     argument.nfsproc3_remove_3_arg.object.name);
+            break;
+        }
+        case NFSPROC3_RMDIR: {
+            char *path = fh_decomp(argument.nfsproc3_rmdir_3_arg.object.dir);
+            raft_log("RMDIR %s/%s", path ? path : "?",
+                     argument.nfsproc3_rmdir_3_arg.object.name);
+            break;
+        }
+        case NFSPROC3_RENAME: {
+            char *from = fh_decomp(argument.nfsproc3_rename_3_arg.from.dir);
+            char *to = fh_decomp(argument.nfsproc3_rename_3_arg.to.dir);
+            raft_log("RENAME %s/%s -> %s/%s", from ? from : "?",
+                     argument.nfsproc3_rename_3_arg.from.name,
+                     to ? to : "?",
+                     argument.nfsproc3_rename_3_arg.to.name);
+            break;
+        }
+        case NFSPROC3_LINK: {
+            char *path = fh_decomp(argument.nfsproc3_link_3_arg.link.dir);
+            char *src = fh_decomp(argument.nfsproc3_link_3_arg.file);
+            raft_log("LINK %s -> %s/%s", src ? src : "?",
+                     path ? path : "?",
+                     argument.nfsproc3_link_3_arg.link.name);
+            break;
+        }
+        default:
+            break;
+    }
     if (result != NULL &&
         !svc_sendreply(transp, (xdrproc_t) _xdr_result, result)) {
         svcerr_systemerr(transp);
@@ -1167,6 +1235,8 @@ int main(int argc, char **argv)
         fprintf(stderr, "Error: extra arguments on command line\n");
         exit(1);
     }
+
+    raft_log_init("raft.log");
 
     /* init write verifier */
     regenerate_write_verifier();
