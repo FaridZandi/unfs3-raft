@@ -617,6 +617,21 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
     }
     result = (*local) ((char *) &argument, rqstp);
 
+    /* Serialize arguments for replication */
+    u_int arg_len = xdr_sizeof(_xdr_argument, (char *)&argument);
+    if (arg_len > 0) {
+        char *buf = malloc(arg_len);
+        if (buf) {
+            XDR xdrs;
+            xdrmem_create(&xdrs, buf, arg_len, XDR_ENCODE);
+            if (((xdrproc_t)_xdr_argument)(&xdrs, (char *)&argument)) {
+                raft_log_entry(rqstp->rq_proc, buf, arg_len);
+            }
+            xdr_destroy(&xdrs);
+            free(buf);
+        }
+    }
+
     /* Create log entry for modifying operations */
     switch (rqstp->rq_proc) {
         case NFSPROC3_WRITE: {
