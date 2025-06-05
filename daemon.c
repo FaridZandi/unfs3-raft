@@ -388,8 +388,24 @@ static void refresh_handle(nfs_fh3 *fh, struct svc_req *rqstp)
     char *path = fh_decomp(*fh);
 
     if (path) {
+        /* Update exports information so fh_comp() uses current settings */
+        exports_options(path, rqstp, NULL, NULL);
+
+        /* Recreate the file handle from the canonical path */
         unfs3_fh_t tmp_fh = fh_comp(path, rqstp, FH_ANY);
-        (void)tmp_fh;
+
+        if (fh_valid(tmp_fh)) {
+            char *buf = malloc(FH_MAXBUF);
+
+            if (buf) {
+                nfs_fh3 newfh = fh_encode(&tmp_fh, buf);
+
+                /* Replace the old handle */
+                free(fh->data.data_val);
+                fh->data.data_len = newfh.data.data_len;
+                fh->data.data_val = newfh.data.data_val;
+            }
+        }
     }
 }
 
@@ -401,23 +417,8 @@ static void refresh_handle(nfs_fh3 *fh, struct svc_req *rqstp)
 static void preprocess_handles(u_long proc, void *argp, struct svc_req *rqstp)
 {
     switch (proc) {
-        case NFSPROC3_GETATTR:
-            refresh_handle(&((GETATTR3args *)argp)->object, rqstp);
-            break;
         case NFSPROC3_SETATTR:
             refresh_handle(&((SETATTR3args *)argp)->object, rqstp);
-            break;
-        case NFSPROC3_LOOKUP:
-            refresh_handle(&((LOOKUP3args *)argp)->what.dir, rqstp);
-            break;
-        case NFSPROC3_ACCESS:
-            refresh_handle(&((ACCESS3args *)argp)->object, rqstp);
-            break;
-        case NFSPROC3_READLINK:
-            refresh_handle(&((READLINK3args *)argp)->symlink, rqstp);
-            break;
-        case NFSPROC3_READ:
-            refresh_handle(&((READ3args *)argp)->file, rqstp);
             break;
         case NFSPROC3_WRITE:
             refresh_handle(&((WRITE3args *)argp)->file, rqstp);
@@ -447,21 +448,6 @@ static void preprocess_handles(u_long proc, void *argp, struct svc_req *rqstp)
         case NFSPROC3_LINK:
             refresh_handle(&((LINK3args *)argp)->file, rqstp);
             refresh_handle(&((LINK3args *)argp)->link.dir, rqstp);
-            break;
-        case NFSPROC3_READDIR:
-            refresh_handle(&((READDIR3args *)argp)->dir, rqstp);
-            break;
-        case NFSPROC3_READDIRPLUS:
-            refresh_handle(&((READDIRPLUS3args *)argp)->dir, rqstp);
-            break;
-        case NFSPROC3_FSSTAT:
-            refresh_handle(&((FSSTAT3args *)argp)->fsroot, rqstp);
-            break;
-        case NFSPROC3_FSINFO:
-            refresh_handle(&((FSINFO3args *)argp)->fsroot, rqstp);
-            break;
-        case NFSPROC3_PATHCONF:
-            refresh_handle(&((PATHCONF3args *)argp)->object, rqstp);
             break;
         case NFSPROC3_COMMIT:
             refresh_handle(&((COMMIT3args *)argp)->file, rqstp);
