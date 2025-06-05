@@ -65,3 +65,9 @@ If you decide to modify the code yourself, you can run
 to append dependency information to the Makefile, so that make
 knows which files depend on each other and recompiles all the
 necessary files on changes.
+
+## Raft replication log
+
+The server records NFS operations to a log that can be replayed on
+other replicas for consistency. By default this log is written to
+`raft.log`. Use the `-R <file>` option to select a different path.
