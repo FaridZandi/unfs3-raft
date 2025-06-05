@@ -85,6 +85,7 @@ struct in6_addr opt_bind_addr;
 int opt_readable_executables = FALSE;
 char *opt_pid_file = NULL;
 int opt_32_bit_truncate = FALSE;
+char *opt_raft_log = "raft.log";
 
 /* Register with portmapper? */
 int opt_portmapper = TRUE;
@@ -239,7 +240,7 @@ static void remove_pid_file(void)
 static void parse_options(int argc, char **argv)
 {
     int opt = 0;
-    char *optstring = "3bcC:de:hl:m:n:prstTuwi:";
+    char *optstring = "3bcC:de:hl:m:n:prstTuwi:R:";
 
 #if defined(WIN32) || defined(AFS_SUPPORT)
     /* Allways truncate to 32 bits in these cases */
@@ -304,6 +305,7 @@ static void parse_options(int argc, char **argv)
                 printf
                 ("\t-3          truncate fileid and cookie to 32 bits\n");
                 printf("\t-T          test exports file and exit\n");
+                printf("\t-R <file>   path to raft log\n");
                 exit(0);
                 break;
             case 'l':
@@ -365,10 +367,107 @@ static void parse_options(int argc, char **argv)
             case 'i':
                 opt_pid_file = optarg;
                 break;
+            case 'R':
+                opt_raft_log = optarg;
+                break;
             case '?':
                 exit(1);
                 break;
         }
+    }
+}
+
+/*
+ * Translate a handle to a path and back again.  This mirrors what the
+ * service functions do via the PREP macro, but we do it here so that any
+ * incoming request first goes through a machine independent representation
+ * of the handle before the actual NFS operation is executed.
+ */
+static void refresh_handle(nfs_fh3 *fh, struct svc_req *rqstp)
+{
+    char *path = fh_decomp(*fh);
+
+    if (path) {
+        unfs3_fh_t tmp_fh = fh_comp(path, rqstp, FH_ANY);
+        (void)tmp_fh;
+    }
+}
+
+/*
+ * Convert any filehandles contained in the RPC arguments into paths and
+ * back into handles.  This ensures that handles are processed in a machine
+ * independent form prior to executing the requested operation.
+ */
+static void preprocess_handles(u_long proc, void *argp, struct svc_req *rqstp)
+{
+    switch (proc) {
+        case NFSPROC3_GETATTR:
+            refresh_handle(&((GETATTR3args *)argp)->object, rqstp);
+            break;
+        case NFSPROC3_SETATTR:
+            refresh_handle(&((SETATTR3args *)argp)->object, rqstp);
+            break;
+        case NFSPROC3_LOOKUP:
+            refresh_handle(&((LOOKUP3args *)argp)->what.dir, rqstp);
+            break;
+        case NFSPROC3_ACCESS:
+            refresh_handle(&((ACCESS3args *)argp)->object, rqstp);
+            break;
+        case NFSPROC3_READLINK:
+            refresh_handle(&((READLINK3args *)argp)->symlink, rqstp);
+            break;
+        case NFSPROC3_READ:
+            refresh_handle(&((READ3args *)argp)->file, rqstp);
+            break;
+        case NFSPROC3_WRITE:
+            refresh_handle(&((WRITE3args *)argp)->file, rqstp);
+            break;
+        case NFSPROC3_CREATE:
+            refresh_handle(&((CREATE3args *)argp)->where.dir, rqstp);
+            break;
+        case NFSPROC3_MKDIR:
+            refresh_handle(&((MKDIR3args *)argp)->where.dir, rqstp);
+            break;
+        case NFSPROC3_SYMLINK:
+            refresh_handle(&((SYMLINK3args *)argp)->where.dir, rqstp);
+            break;
+        case NFSPROC3_MKNOD:
+            refresh_handle(&((MKNOD3args *)argp)->where.dir, rqstp);
+            break;
+        case NFSPROC3_REMOVE:
+            refresh_handle(&((REMOVE3args *)argp)->object.dir, rqstp);
+            break;
+        case NFSPROC3_RMDIR:
+            refresh_handle(&((RMDIR3args *)argp)->object.dir, rqstp);
+            break;
+        case NFSPROC3_RENAME:
+            refresh_handle(&((RENAME3args *)argp)->from.dir, rqstp);
+            refresh_handle(&((RENAME3args *)argp)->to.dir, rqstp);
+            break;
+        case NFSPROC3_LINK:
+            refresh_handle(&((LINK3args *)argp)->file, rqstp);
+            refresh_handle(&((LINK3args *)argp)->link.dir, rqstp);
+            break;
+        case NFSPROC3_READDIR:
+            refresh_handle(&((READDIR3args *)argp)->dir, rqstp);
+            break;
+        case NFSPROC3_READDIRPLUS:
+            refresh_handle(&((READDIRPLUS3args *)argp)->dir, rqstp);
+            break;
+        case NFSPROC3_FSSTAT:
+            refresh_handle(&((FSSTAT3args *)argp)->fsroot, rqstp);
+            break;
+        case NFSPROC3_FSINFO:
+            refresh_handle(&((FSINFO3args *)argp)->fsroot, rqstp);
+            break;
+        case NFSPROC3_PATHCONF:
+            refresh_handle(&((PATHCONF3args *)argp)->object, rqstp);
+            break;
+        case NFSPROC3_COMMIT:
+            refresh_handle(&((COMMIT3args *)argp)->file, rqstp);
+            break;
+        default:
+            break;
     }
 }
 
@@ -615,6 +714,13 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
         svcerr_decode(transp);
         return;
     }
+
+    /*
+     * Refresh all file handles before executing the RPC so that any
+     * logged operation can be replayed on other machines using paths.
+     */
+    preprocess_handles(rqstp->rq_proc, &argument, rqstp);
+
     result = (*local) ((char *) &argument, rqstp);
 
     /* Serialize arguments for replication */
@@ -625,6 +731,11 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
             XDR xdrs;
             xdrmem_create(&xdrs, buf, arg_len, XDR_ENCODE);
             if (((xdrproc_t)_xdr_argument)(&xdrs, (char *)&argument)) {
+                /*
+                 * Logged buffers still contain file handles which are local to
+                 * this server. Followers reconstruct handles from the textual
+                 * path information logged below.
+                 */
                 raft_log_entry(rqstp->rq_proc, buf, arg_len);
             }
             xdr_destroy(&xdrs);
@@ -1251,7 +1362,7 @@ int main(int argc, char **argv)
         exit(1);
     }
 
-    raft_log_init("raft.log");
+    raft_log_init(opt_raft_log);
 
     /* init write verifier */
     regenerate_write_verifier();
