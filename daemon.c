@@ -118,6 +118,58 @@ void logmsg(int prio, const char *fmt, ...)
     va_end(ap);
 }
 
+static void fh_to_hex(const nfs_fh3 *fh, char *out)
+{
+    size_t len = fh->data.data_len;
+    const unsigned char *d = (const unsigned char *)fh->data.data_val;
+    size_t i;
+    for (i = 0; i < len && i < FH_MAXBUF; i++)
+        sprintf(out + i * 2, "%02x", d[i]);
+    out[i * 2] = '\0';
+}
+
+static const char *nfs3_proc_name(u_long proc)
+{
+    switch (proc) {
+        case NFSPROC3_NULL: return "NULL";
+        case NFSPROC3_GETATTR: return "GETATTR";
+        case NFSPROC3_SETATTR: return "SETATTR";
+        case NFSPROC3_LOOKUP: return "LOOKUP";
+        case NFSPROC3_ACCESS: return "ACCESS";
+        case NFSPROC3_READLINK: return "READLINK";
+        case NFSPROC3_READ: return "READ";
+        case NFSPROC3_WRITE: return "WRITE";
+        case NFSPROC3_CREATE: return "CREATE";
+        case NFSPROC3_MKDIR: return "MKDIR";
+        case NFSPROC3_SYMLINK: return "SYMLINK";
+        case NFSPROC3_MKNOD: return "MKNOD";
+        case NFSPROC3_REMOVE: return "REMOVE";
+        case NFSPROC3_RMDIR: return "RMDIR";
+        case NFSPROC3_RENAME: return "RENAME";
+        case NFSPROC3_LINK: return "LINK";
+        case NFSPROC3_READDIR: return "READDIR";
+        case NFSPROC3_READDIRPLUS: return "READDIRPLUS";
+        case NFSPROC3_FSSTAT: return "FSSTAT";
+        case NFSPROC3_FSINFO: return "FSINFO";
+        case NFSPROC3_PATHCONF: return "PATHCONF";
+        case NFSPROC3_COMMIT: return "COMMIT";
+        default: return "UNKNOWN";
+    }
+}
+
+static const char *mountproc_name(u_long proc)
+{
+    switch (proc) {
+        case MOUNTPROC_NULL: return "NULL";
+        case MOUNTPROC_MNT: return "MNT";
+        case MOUNTPROC_DUMP: return "DUMP";
+        case MOUNTPROC_UMNT: return "UMNT";
+        case MOUNTPROC_UMNTALL: return "UMNTALL";
+        case MOUNTPROC_EXPORT: return "EXPORT";
+        default: return "UNKNOWN";
+    }
+}
+
 /*
  * return remote address from svc_req structure
  */
@@ -393,13 +445,17 @@ static void refresh_handle(nfs_fh3 *fh, struct svc_req *rqstp)
 {
     struct in6_addr addr;
     char client[INET6_ADDRSTRLEN];
+    char hex[FH_MAXBUF * 2 + 1];
 
     get_remote(rqstp, &addr);
     inet_ntop(AF_INET6, &addr, client, sizeof(client));
+    fh_to_hex(fh, hex);
+    logmsg(LOG_INFO, "refresh_handle: client=%s fh=%s", client, hex);
 
     const char *path = handle_log_lookup(client, fh);
     if (!path)
         path = fh_decomp(*fh);
+    logmsg(LOG_INFO, "refresh_handle: path %s", path ? path : "(none)");
 
     if (path) {
         /* Update exports information so fh_comp() uses current settings */
@@ -413,6 +469,9 @@ static void refresh_handle(nfs_fh3 *fh, struct svc_req *rqstp)
 
             if (buf) {
                 nfs_fh3 newfh = fh_encode(&tmp_fh, buf);
+
+                fh_to_hex(&newfh, hex);
+                logmsg(LOG_INFO, "refresh_handle: newfh %s", hex);
 
                 /* Replace the old handle */
                 free(fh->data.data_val);
@@ -430,40 +489,100 @@ static void refresh_handle(nfs_fh3 *fh, struct svc_req *rqstp)
  */
 static void preprocess_handles(u_long proc, void *argp, struct svc_req *rqstp)
 {
+    logmsg(LOG_INFO, "preprocess_handles called for %s", nfs3_proc_name(proc));
     switch (proc) {
         case NFSPROC3_SETATTR:
+            {
+                char hex[FH_MAXBUF * 2 + 1];
+                fh_to_hex(&((SETATTR3args *)argp)->object, hex);
+                logmsg(LOG_INFO, "preprocess_handles: SETATTR handle %s", hex);
+            }
             refresh_handle(&((SETATTR3args *)argp)->object, rqstp);
             break;
         case NFSPROC3_WRITE:
+            {
+                char hex[FH_MAXBUF * 2 + 1];
+                fh_to_hex(&((WRITE3args *)argp)->file, hex);
+                logmsg(LOG_INFO, "preprocess_handles: WRITE handle %s", hex);
+            }
             refresh_handle(&((WRITE3args *)argp)->file, rqstp);
             break;
         case NFSPROC3_CREATE:
+            {
+                char hex[FH_MAXBUF * 2 + 1];
+                fh_to_hex(&((CREATE3args *)argp)->where.dir, hex);
+                logmsg(LOG_INFO, "preprocess_handles: CREATE handle %s", hex);
+            }
             refresh_handle(&((CREATE3args *)argp)->where.dir, rqstp);
             break;
         case NFSPROC3_MKDIR:
+            {
+                char hex[FH_MAXBUF * 2 + 1];
+                fh_to_hex(&((MKDIR3args *)argp)->where.dir, hex);
+                logmsg(LOG_INFO, "preprocess_handles: MKDIR handle %s", hex);
+            }
             refresh_handle(&((MKDIR3args *)argp)->where.dir, rqstp);
             break;
         case NFSPROC3_SYMLINK:
+            {
+                char hex[FH_MAXBUF * 2 + 1];
+                fh_to_hex(&((SYMLINK3args *)argp)->where.dir, hex);
+                logmsg(LOG_INFO, "preprocess_handles: SYMLINK handle %s", hex);
+            }
             refresh_handle(&((SYMLINK3args *)argp)->where.dir, rqstp);
             break;
         case NFSPROC3_MKNOD:
+            {
+                char hex[FH_MAXBUF * 2 + 1];
+                fh_to_hex(&((MKNOD3args *)argp)->where.dir, hex);
+                logmsg(LOG_INFO, "preprocess_handles: MKNOD handle %s", hex);
+            }
             refresh_handle(&((MKNOD3args *)argp)->where.dir, rqstp);
             break;
         case NFSPROC3_REMOVE:
+            {
+                char hex[FH_MAXBUF * 2 + 1];
+                fh_to_hex(&((REMOVE3args *)argp)->object.dir, hex);
+                logmsg(LOG_INFO, "preprocess_handles: REMOVE handle %s", hex);
+            }
             refresh_handle(&((REMOVE3args *)argp)->object.dir, rqstp);
             break;
         case NFSPROC3_RMDIR:
+            {
+                char hex[FH_MAXBUF * 2 + 1];
+                fh_to_hex(&((RMDIR3args *)argp)->object.dir, hex);
+                logmsg(LOG_INFO, "preprocess_handles: RMDIR handle %s", hex);
+            }
             refresh_handle(&((RMDIR3args *)argp)->object.dir, rqstp);
             break;
         case NFSPROC3_RENAME:
+            {
+                char hex[FH_MAXBUF * 2 + 1];
+                fh_to_hex(&((RENAME3args *)argp)->from.dir, hex);
+                logmsg(LOG_INFO, "preprocess_handles: RENAME from handle %s", hex);
+                fh_to_hex(&((RENAME3args *)argp)->to.dir, hex);
+                logmsg(LOG_INFO, "preprocess_handles: RENAME to handle %s", hex);
+            }
             refresh_handle(&((RENAME3args *)argp)->from.dir, rqstp);
             refresh_handle(&((RENAME3args *)argp)->to.dir, rqstp);
             break;
         case NFSPROC3_LINK:
+            {
+                char hex[FH_MAXBUF * 2 + 1];
+                fh_to_hex(&((LINK3args *)argp)->file, hex);
+                logmsg(LOG_INFO, "preprocess_handles: LINK file handle %s", hex);
+                fh_to_hex(&((LINK3args *)argp)->link.dir, hex);
+                logmsg(LOG_INFO, "preprocess_handles: LINK dir handle %s", hex);
+            }
             refresh_handle(&((LINK3args *)argp)->file, rqstp);
             refresh_handle(&((LINK3args *)argp)->link.dir, rqstp);
             break;
         case NFSPROC3_COMMIT:
+            {
+                char hex[FH_MAXBUF * 2 + 1];
+                fh_to_hex(&((COMMIT3args *)argp)->file, hex);
+                logmsg(LOG_INFO, "preprocess_handles: COMMIT handle %s", hex);
+            }
             refresh_handle(&((COMMIT3args *)argp)->file, rqstp);
             break;
         default:
@@ -761,6 +880,9 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
                          argument.nfsproc3_lookup_3_arg.what.name);
                 handle_log_record(remote_host, full,
                                   &res->LOOKUP3res_u.resok.object);
+                char hex[FH_MAXBUF * 2 + 1];
+                fh_to_hex(&res->LOOKUP3res_u.resok.object, hex);
+                logmsg(LOG_INFO, "LOOKUP result handle %s for %s", hex, full);
             }
             break;
         }
@@ -782,6 +904,9 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
                          argument.nfsproc3_create_3_arg.where.name);
                 handle_log_record(remote_host, full,
                                   &res->CREATE3res_u.resok.obj.post_op_fh3_u.handle);
+                char hex[FH_MAXBUF * 2 + 1];
+                fh_to_hex(&res->CREATE3res_u.resok.obj.post_op_fh3_u.handle, hex);
+                logmsg(LOG_INFO, "CREATE result handle %s for %s", hex, full);
             }
             break;
         }
@@ -796,6 +921,9 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
                          argument.nfsproc3_mkdir_3_arg.where.name);
                 handle_log_record(remote_host, full,
                                   &res->MKDIR3res_u.resok.obj.post_op_fh3_u.handle);
+                char hex[FH_MAXBUF * 2 + 1];
+                fh_to_hex(&res->MKDIR3res_u.resok.obj.post_op_fh3_u.handle, hex);
+                logmsg(LOG_INFO, "MKDIR result handle %s for %s", hex, full);
             }
             break;
         }
@@ -810,6 +938,9 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
                          argument.nfsproc3_symlink_3_arg.where.name);
                 handle_log_record(remote_host, full,
                                   &res->SYMLINK3res_u.resok.obj.post_op_fh3_u.handle);
+                char hex[FH_MAXBUF * 2 + 1];
+                fh_to_hex(&res->SYMLINK3res_u.resok.obj.post_op_fh3_u.handle, hex);
+                logmsg(LOG_INFO, "SYMLINK result handle %s for %s", hex, full);
             }
             break;
         }
@@ -824,6 +955,9 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
                          argument.nfsproc3_mknod_3_arg.where.name);
                 handle_log_record(remote_host, full,
                                   &res->MKNOD3res_u.resok.obj.post_op_fh3_u.handle);
+                char hex[FH_MAXBUF * 2 + 1];
+                fh_to_hex(&res->MKNOD3res_u.resok.obj.post_op_fh3_u.handle, hex);
+                logmsg(LOG_INFO, "MKNOD result handle %s for %s", hex, full);
             }
             break;
         }
@@ -889,6 +1023,7 @@ static void mountprog_3(struct svc_req *rqstp, register SVCXPRT * transp)
 
     get_remote(rqstp, &remote_addr);
     inet_ntop(AF_INET6, &remote_addr, remote_host, sizeof(remote_host));
+    logmsg(LOG_INFO, "mountprog_3 called for %s", mountproc_name(rqstp->rq_proc));
     switch (rqstp->rq_proc) {
         case MOUNTPROC_NULL:
             _xdr_argument = (xdrproc_t) xdr_void;
@@ -949,6 +1084,10 @@ static void mountprog_3(struct svc_req *rqstp, register SVCXPRT * transp)
             fh.data.data_len = res->mountres3_u.mountinfo.fhandle.fhandle3_len;
             fh.data.data_val = res->mountres3_u.mountinfo.fhandle.fhandle3_val;
             handle_log_record(remote_host, argument.mountproc_mnt_3_arg, &fh);
+            char hex[FH_MAXBUF * 2 + 1];
+            fh_to_hex(&fh, hex);
+            logmsg(LOG_INFO, "MNT result handle %s for %s", hex,
+                   argument.mountproc_mnt_3_arg);
         }
     }
 
