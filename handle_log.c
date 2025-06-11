@@ -1,10 +1,14 @@
 #include "config.h"
 #include "handle_log.h"
 #include "fh.h"
+#include "daemon.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <arpa/inet.h>
+#ifndef WIN32
+#include <syslog.h>
+#endif
 
 struct handle_entry {
     char client[INET6_ADDRSTRLEN];
@@ -83,6 +87,9 @@ void handle_log_record(const char *client, const char *path, const nfs_fh3 *fh)
     e->next = entries;
     entries = e;
 
+    logmsg(LOG_INFO, "handle_log_record: client=%s path=%s fh=%s", client, path,
+           e->handle_hex);
+
     fprintf(handle_fp, "%s %s %s\n", e->client, e->path, e->handle_hex);
     fflush(handle_fp);
 }
@@ -94,6 +101,10 @@ const char *handle_log_lookup(const char *client, const nfs_fh3 *fh)
     struct handle_entry *e;
     for (e = entries; e; e = e->next)
         if (strcmp(e->client, client) == 0 && strcmp(e->handle_hex, hex) == 0)
-            return e->path;
+            {
+                logmsg(LOG_INFO, "handle_log_lookup: found path %s for client=%s fh=%s", e->path, client, hex);
+                return e->path;
+            }
+    logmsg(LOG_INFO, "handle_log_lookup: no entry for client=%s fh=%s", client, hex);
     return NULL;
 }
