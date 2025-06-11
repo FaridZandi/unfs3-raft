@@ -57,6 +57,7 @@
 #include "backend.h"
 #include "Config/exports.h"
 #include "raft_log.h"
+#include "handle_log.h"
 
 #ifndef SIG_PF
 #define SIG_PF void(*)(int)
@@ -86,6 +87,7 @@ int opt_readable_executables = FALSE;
 char *opt_pid_file = NULL;
 int opt_32_bit_truncate = FALSE;
 char *opt_raft_log = "raft.log";
+char *opt_handle_log = "handle.log";
 
 /* Register with portmapper? */
 int opt_portmapper = TRUE;
@@ -240,7 +242,7 @@ static void remove_pid_file(void)
 static void parse_options(int argc, char **argv)
 {
     int opt = 0;
-    char *optstring = "3bcC:de:hl:m:n:prstTuwi:R:";
+    char *optstring = "3bcC:de:hl:m:n:prstTuwi:R:H:";
 
 #if defined(WIN32) || defined(AFS_SUPPORT)
     /* Allways truncate to 32 bits in these cases */
@@ -306,6 +308,7 @@ static void parse_options(int argc, char **argv)
                 ("\t-3          truncate fileid and cookie to 32 bits\n");
                 printf("\t-T          test exports file and exit\n");
                 printf("\t-R <file>   path to raft log\n");
+                printf("\t-H <file>   path to handle log\n");
                 exit(0);
                 break;
             case 'l':
@@ -370,6 +373,9 @@ static void parse_options(int argc, char **argv)
             case 'R':
                 opt_raft_log = optarg;
                 break;
+            case 'H':
+                opt_handle_log = optarg;
+                break;
             case '?':
                 exit(1);
                 break;
@@ -385,7 +391,15 @@ static void parse_options(int argc, char **argv)
  */
 static void refresh_handle(nfs_fh3 *fh, struct svc_req *rqstp)
 {
-    char *path = fh_decomp(*fh);
+    struct in6_addr addr;
+    char client[INET6_ADDRSTRLEN];
+
+    get_remote(rqstp, &addr);
+    inet_ntop(AF_INET6, &addr, client, sizeof(client));
+
+    const char *path = handle_log_lookup(client, fh);
+    if (!path)
+        path = fh_decomp(*fh);
 
     if (path) {
         /* Update exports information so fh_comp() uses current settings */
@@ -502,6 +516,7 @@ void daemon_exit(int error)
     remove_pid_file();
     backend_shutdown();
     raft_log_close();
+    handle_log_close();
 
     exit(1);
 }
@@ -538,7 +553,11 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
     char *result;
     xdrproc_t _xdr_argument, _xdr_result;
     char *(*local) (char *, struct svc_req *);
+    struct in6_addr remote_addr;
+    char remote_host[INET6_ADDRSTRLEN];
 
+    get_remote(rqstp, &remote_addr);
+    inet_ntop(AF_INET6, &remote_addr, remote_host, sizeof(remote_host));
     switch (rqstp->rq_proc) {
         case NFSPROC3_NULL:
             _xdr_argument = (xdrproc_t) xdr_void;
@@ -731,6 +750,20 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
 
     /* Create log entry for modifying operations */
     switch (rqstp->rq_proc) {
+        case NFSPROC3_LOOKUP: {
+            char *path = fh_decomp(argument.nfsproc3_lookup_3_arg.what.dir);
+            raft_log("LOOKUP %s/%s", path ? path : "?",
+                     argument.nfsproc3_lookup_3_arg.what.name);
+            LOOKUP3res *res = (LOOKUP3res *)result;
+            if (res && res->status == NFS3_OK && path) {
+                char full[NFS_MAXPATHLEN];
+                snprintf(full, sizeof(full), "%s/%s", path,
+                         argument.nfsproc3_lookup_3_arg.what.name);
+                handle_log_record(remote_host, full,
+                                  &res->LOOKUP3res_u.resok.object);
+            }
+            break;
+        }
         case NFSPROC3_WRITE: {
             char *path = fh_decomp(argument.nfsproc3_write_3_arg.file);
             raft_log("WRITE %s %llu %u", path ? path : "?",
@@ -742,24 +775,56 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
             char *path = fh_decomp(argument.nfsproc3_create_3_arg.where.dir);
             raft_log("CREATE %s/%s", path ? path : "?",
                      argument.nfsproc3_create_3_arg.where.name);
+            CREATE3res *res = (CREATE3res *)result;
+            if (res && res->status == NFS3_OK && path) {
+                char full[NFS_MAXPATHLEN];
+                snprintf(full, sizeof(full), "%s/%s", path,
+                         argument.nfsproc3_create_3_arg.where.name);
+                handle_log_record(remote_host, full,
+                                  &res->CREATE3res_u.resok.obj.post_op_fh3_u.handle);
+            }
             break;
         }
         case NFSPROC3_MKDIR: {
             char *path = fh_decomp(argument.nfsproc3_mkdir_3_arg.where.dir);
             raft_log("MKDIR %s/%s", path ? path : "?",
                      argument.nfsproc3_mkdir_3_arg.where.name);
+            MKDIR3res *res = (MKDIR3res *)result;
+            if (res && res->status == NFS3_OK && path) {
+                char full[NFS_MAXPATHLEN];
+                snprintf(full, sizeof(full), "%s/%s", path,
+                         argument.nfsproc3_mkdir_3_arg.where.name);
+                handle_log_record(remote_host, full,
+                                  &res->MKDIR3res_u.resok.obj.post_op_fh3_u.handle);
+            }
             break;
         }
         case NFSPROC3_SYMLINK: {
             char *path = fh_decomp(argument.nfsproc3_symlink_3_arg.where.dir);
             raft_log("SYMLINK %s/%s", path ? path : "?",
                      argument.nfsproc3_symlink_3_arg.where.name);
+            SYMLINK3res *res = (SYMLINK3res *)result;
+            if (res && res->status == NFS3_OK && path) {
+                char full[NFS_MAXPATHLEN];
+                snprintf(full, sizeof(full), "%s/%s", path,
+                         argument.nfsproc3_symlink_3_arg.where.name);
+                handle_log_record(remote_host, full,
+                                  &res->SYMLINK3res_u.resok.obj.post_op_fh3_u.handle);
+            }
             break;
         }
         case NFSPROC3_MKNOD: {
             char *path = fh_decomp(argument.nfsproc3_mknod_3_arg.where.dir);
             raft_log("MKNOD %s/%s", path ? path : "?",
                      argument.nfsproc3_mknod_3_arg.where.name);
+            MKNOD3res *res = (MKNOD3res *)result;
+            if (res && res->status == NFS3_OK && path) {
+                char full[NFS_MAXPATHLEN];
+                snprintf(full, sizeof(full), "%s/%s", path,
+                         argument.nfsproc3_mknod_3_arg.where.name);
+                handle_log_record(remote_host, full,
+                                  &res->MKNOD3res_u.resok.obj.post_op_fh3_u.handle);
+            }
             break;
         }
         case NFSPROC3_REMOVE: {
@@ -819,7 +884,11 @@ static void mountprog_3(struct svc_req *rqstp, register SVCXPRT * transp)
     char *result;
     xdrproc_t _xdr_argument, _xdr_result;
     char *(*local) (char *, struct svc_req *);
+    struct in6_addr remote_addr;
+    char remote_host[INET6_ADDRSTRLEN];
 
+    get_remote(rqstp, &remote_addr);
+    inet_ntop(AF_INET6, &remote_addr, remote_host, sizeof(remote_host));
     switch (rqstp->rq_proc) {
         case MOUNTPROC_NULL:
             _xdr_argument = (xdrproc_t) xdr_void;
@@ -872,6 +941,17 @@ static void mountprog_3(struct svc_req *rqstp, register SVCXPRT * transp)
         return;
     }
     result = (*local) ((char *) &argument, rqstp);
+
+    if (rqstp->rq_proc == MOUNTPROC_MNT) {
+        mountres3 *res = (mountres3 *)result;
+        if (res && res->fhs_status == MNT3_OK) {
+            nfs_fh3 fh;
+            fh.data.data_len = res->mountres3_u.mountinfo.fhandle.fhandle3_len;
+            fh.data.data_val = res->mountres3_u.mountinfo.fhandle.fhandle3_val;
+            handle_log_record(remote_host, argument.mountproc_mnt_3_arg, &fh);
+        }
+    }
+
     if (result != NULL &&
         !svc_sendreply(transp, (xdrproc_t) _xdr_result, result)) {
         svcerr_systemerr(transp);
@@ -1349,6 +1429,7 @@ int main(int argc, char **argv)
     }
 
     raft_log_init(opt_raft_log);
+    handle_log_init(opt_handle_log);
 
     /* init write verifier */
     regenerate_write_verifier();
