@@ -980,6 +980,16 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
                      argument.nfsproc3_rename_3_arg.from.name,
                      to ? to : "?",
                      argument.nfsproc3_rename_3_arg.to.name);
+            RENAME3res *res = (RENAME3res *)result;
+            if (res && res->status == NFS3_OK && from && to) {
+                char full_from[NFS_MAXPATHLEN];
+                char full_to[NFS_MAXPATHLEN];
+                snprintf(full_from, sizeof(full_from), "%s/%s", from,
+                         argument.nfsproc3_rename_3_arg.from.name);
+                snprintf(full_to, sizeof(full_to), "%s/%s", to,
+                         argument.nfsproc3_rename_3_arg.to.name);
+                handle_log_record_rename(full_from, full_to);
+            }
             break;
         }
         case NFSPROC3_LINK: {
