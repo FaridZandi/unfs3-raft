@@ -965,12 +965,26 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
             char *path = fh_decomp(argument.nfsproc3_remove_3_arg.object.dir);
             raft_log("REMOVE %s/%s", path ? path : "?",
                      argument.nfsproc3_remove_3_arg.object.name);
+            REMOVE3res *res = (REMOVE3res *)result;
+            if (res && res->status == NFS3_OK && path) {
+                char full[NFS_MAXPATHLEN];
+                snprintf(full, sizeof(full), "%s/%s", path,
+                         argument.nfsproc3_remove_3_arg.object.name);
+                handle_log_record_remove(remote_host, full);
+            }
             break;
         }
         case NFSPROC3_RMDIR: {
             char *path = fh_decomp(argument.nfsproc3_rmdir_3_arg.object.dir);
             raft_log("RMDIR %s/%s", path ? path : "?",
                      argument.nfsproc3_rmdir_3_arg.object.name);
+            RMDIR3res *res = (RMDIR3res *)result;
+            if (res && res->status == NFS3_OK && path) {
+                char full[NFS_MAXPATHLEN];
+                snprintf(full, sizeof(full), "%s/%s", path,
+                         argument.nfsproc3_rmdir_3_arg.object.name);
+                handle_log_record_remove(remote_host, full);
+            }
             break;
         }
         case NFSPROC3_RENAME: {
@@ -980,6 +994,16 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
                      argument.nfsproc3_rename_3_arg.from.name,
                      to ? to : "?",
                      argument.nfsproc3_rename_3_arg.to.name);
+            RENAME3res *res = (RENAME3res *)result;
+            if (res && res->status == NFS3_OK && from && to) {
+                char old[NFS_MAXPATHLEN];
+                char newp[NFS_MAXPATHLEN];
+                snprintf(old, sizeof(old), "%s/%s", from,
+                         argument.nfsproc3_rename_3_arg.from.name);
+                snprintf(newp, sizeof(newp), "%s/%s", to,
+                         argument.nfsproc3_rename_3_arg.to.name);
+                handle_log_record_rename(remote_host, old, newp);
+            }
             break;
         }
         case NFSPROC3_LINK: {
