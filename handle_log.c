@@ -197,19 +197,24 @@ const char *handle_log_lookup(const char *client, const nfs_fh3 *fh)
     struct handle_entry *e;
     const char *path = NULL;
 
+    logmsg(LOG_DEBUG, "handle_log_lookup: start lookup for client=%s fh=%s", client, hex);
+
     for (e = entries; e; e = e->next) {
         if (!path) {
             if (e->op == HANDLE_LOG_ADD &&
                 strcmp(e->client, client) == 0 &&
                 strcmp(e->handle_hex, hex) == 0) {
                 path = e->path;
+                logmsg(LOG_DEBUG, "handle_log_lookup: HANDLE_LOG_ADD matched for path=%s", path);
             }
         } else {
             if (strcmp(e->client, client) != 0)
                 continue;
             if (e->op == HANDLE_LOG_RENAME && strcmp(e->path, path) == 0) {
+                logmsg(LOG_DEBUG, "handle_log_lookup: HANDLE_LOG_RENAME: %s -> %s", path, e->path2);
                 path = e->path2;
             } else if (e->op == HANDLE_LOG_REMOVE && strcmp(e->path, path) == 0) {
+                logmsg(LOG_DEBUG, "handle_log_lookup: HANDLE_LOG_REMOVE for path=%s", path);
                 path = NULL;
             }
         }

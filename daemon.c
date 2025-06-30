@@ -646,6 +646,8 @@ void daemon_exit(int error)
  */
 static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
 {
+    logmsg(LOG_INFO, "--------------------------------NFS OPERATION START---------------------------\n");
+
     union {
         GETATTR3args nfsproc3_getattr_3_arg;
         SETATTR3args nfsproc3_setattr_3_arg;
@@ -1017,6 +1019,9 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
         default:
             break;
     }
+
+    // sleep(1); 
+
     if (result != NULL &&
         !svc_sendreply(transp, (xdrproc_t) _xdr_result, result)) {
         svcerr_systemerr(transp);
@@ -1026,6 +1031,11 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
         (transp, (xdrproc_t) _xdr_argument, (caddr_t) & argument)) {
         logmsg(LOG_CRIT, "Unable to free XDR arguments");
     }
+
+
+
+    logmsg(LOG_INFO, "\n----------------------------NFS OPERATION DONE--------------------------------");
+
     return;
 }
 
@@ -1035,6 +1045,8 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
  */
 static void mountprog_3(struct svc_req *rqstp, register SVCXPRT * transp)
 {
+    logmsg(LOG_INFO, "--------------------------------MNT OPERATION START---------------------------\n");
+
     union {
         dirpath mountproc_mnt_3_arg;
         dirpath mountproc_umnt_3_arg;
@@ -1124,6 +1136,7 @@ static void mountprog_3(struct svc_req *rqstp, register SVCXPRT * transp)
         (transp, (xdrproc_t) _xdr_argument, (caddr_t) & argument)) {
         logmsg(LOG_CRIT, "Unable to free XDR arguments");
     }
+    logmsg(LOG_INFO, "\n--------------------------------OPERATION DONE--------------------------------");
     return;
 }
 
