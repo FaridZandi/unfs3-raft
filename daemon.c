@@ -841,33 +841,40 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
         return;
     }
 
+    logmsg(LOG_INFO, "NFS operation %s from %s:%d",
+           nfs3_proc_name(rqstp->rq_proc), remote_host,
+           ntohs(get_port(rqstp)));
+    // logmsg(LOG_INFO, "NFS arguments: %s", xdr_argument_to_string(rqstp->rq_proc, &argument));
+
+
     /*
      * Refresh all file handles before executing the RPC so that any
      * logged operation can be replayed on other machines using paths.
      */
-    preprocess_handles(rqstp->rq_proc, &argument, rqstp);
+    // preprocess_handles(rqstp->rq_proc, &argument, rqstp);
+    
+    /* Serialize arguments for replication */
+    // u_int arg_len = xdr_sizeof(_xdr_argument, (char *)&argument);
+    // if (arg_len > 0) {
+    //     char *buf = malloc(arg_len);
+    //     if (buf) {
+    //         XDR xdrs;
+    //         xdrmem_create(&xdrs, buf, arg_len, XDR_ENCODE);
+    //         if (((xdrproc_t)_xdr_argument)(&xdrs, (char *)&argument)) {
+    //             /*
+    //              * Logged buffers still contain file handles which are local to
+    //              * this server. Followers reconstruct handles from the textual
+    //              * path information logged below.
+    //              */
+    //             raft_log_entry(rqstp->rq_proc, buf, arg_len);
+    //         }
+    //         xdr_destroy(&xdrs);
+    //         free(buf);
+    //     }
+    // }
 
     result = (*local) ((char *) &argument, rqstp);
 
-    /* Serialize arguments for replication */
-    u_int arg_len = xdr_sizeof(_xdr_argument, (char *)&argument);
-    if (arg_len > 0) {
-        char *buf = malloc(arg_len);
-        if (buf) {
-            XDR xdrs;
-            xdrmem_create(&xdrs, buf, arg_len, XDR_ENCODE);
-            if (((xdrproc_t)_xdr_argument)(&xdrs, (char *)&argument)) {
-                /*
-                 * Logged buffers still contain file handles which are local to
-                 * this server. Followers reconstruct handles from the textual
-                 * path information logged below.
-                 */
-                raft_log_entry(rqstp->rq_proc, buf, arg_len);
-            }
-            xdr_destroy(&xdrs);
-            free(buf);
-        }
-    }
 
     /* Create log entry for modifying operations */
     switch (rqstp->rq_proc) {
@@ -1021,6 +1028,14 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
     }
 
     // sleep(1); 
+
+    if (result == NULL) {
+        logmsg(LOG_ERR, "NFS operation %s failed for %s",
+               nfs3_proc_name(rqstp->rq_proc), remote_host);
+    } else {
+        logmsg(LOG_INFO, "NFS operation %s succeeded for %s",
+               nfs3_proc_name(rqstp->rq_proc), remote_host);
+    }
 
     if (result != NULL &&
         !svc_sendreply(transp, (xdrproc_t) _xdr_result, result)) {

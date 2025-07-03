@@ -33,6 +33,13 @@ mkdir -p "$MOUNT_BASE"
 
 MOUNT_IMAGE=True
 
+echo "making unfs3-raft executable"
+cd .. 
+make 
+sudo make install
+cd "$WORKDIR"
+
+
 for i in $(seq 1 "$NUM"); do
     instdir=$WORKDIR/inst$i
     mkdir -p "$instdir"
@@ -71,7 +78,7 @@ for i in $(seq 1 "$NUM"); do
         chown -R faridzandi:dfrancis "$share"
     fi 
 
-    echo "$share 10.70.10.108(rw,sync,no_subtree_check)" > "$exports"
+    echo "$share 10.70.10.108(rw,sync,no_subtree_check,removable,fsid=1)" > "$exports"
 
     echo "[*] inst$i: launching UNFS3 on ports nfs=$nfs_port  mount=$mnt_port"
     unfsd -d -e "$exports" -i "$pidfile" -n "$nfs_port" -m "$mnt_port" -H "$handle" -R "$raft" > "$instdir/unfsd.out" 2>&1 &
