@@ -58,6 +58,7 @@
 #include "Config/exports.h"
 #include "raft_log.h"
 #include "handle_log.h"
+#include "raft.h"
 
 #ifndef SIG_PF
 #define SIG_PF void(*)(int)
@@ -88,9 +89,14 @@ char *opt_pid_file = NULL;
 int opt_32_bit_truncate = FALSE;
 char *opt_raft_log = "raft.log";
 char *opt_handle_log = "handle.log";
+int opt_raft_id = 1;
+char *opt_raft_peers = NULL;
 
 /* Register with portmapper? */
 int opt_portmapper = TRUE;
+
+static raft_server_t *raft_srv = NULL;
+static raft_cbs_t raft_cbs;
 
 /*
  * output message to syslog or stdout
@@ -116,6 +122,55 @@ void logmsg(int prio, const char *fmt, ...)
         putchar('\n');
     }
     va_end(ap);
+}
+
+static int raft_send_requestvote_cb(raft_server_t* raft, void* udata, raft_node_t* node, msg_requestvote_t* msg)
+{
+    (void)raft; (void)udata; (void)msg;
+    logmsg(LOG_DEBUG, "raft: send vote request to %d", raft_node_get_id(node));
+    return 0;
+}
+
+static int raft_send_appendentries_cb(raft_server_t* raft, void* udata, raft_node_t* node, msg_appendentries_t* msg)
+{
+    (void)raft; (void)udata; (void)msg;
+    logmsg(LOG_DEBUG, "raft: send appendentries to %d", raft_node_get_id(node));
+    return 0;
+}
+
+static int raft_persist_term_cb(raft_server_t* raft, void* udata, raft_term_t term, raft_node_id_t vote)
+{
+    (void)raft; (void)udata; (void)term; (void)vote;
+    return 0;
+}
+
+static int raft_persist_vote_cb(raft_server_t* raft, void* udata, raft_node_id_t vote)
+{
+    (void)raft; (void)udata; (void)vote;
+    return 0;
+}
+
+static void raft_init(void)
+{
+    raft_srv = raft_new();
+    raft_cbs.send_requestvote = raft_send_requestvote_cb;
+    raft_cbs.send_appendentries = raft_send_appendentries_cb;
+    raft_cbs.persist_term = raft_persist_term_cb;
+    raft_cbs.persist_vote = raft_persist_vote_cb;
+    raft_set_callbacks(raft_srv, &raft_cbs, NULL);
+    raft_add_node(raft_srv, NULL, opt_raft_id, 1);
+
+    if (opt_raft_peers) {
+        char *tmp = strdup(opt_raft_peers);
+        char *p = strtok(tmp, ",");
+        while (p) {
+            int id = atoi(p);
+            if (id != opt_raft_id)
+                raft_add_node(raft_srv, NULL, id, 0);
+            p = strtok(NULL, ",");
+        }
+        free(tmp);
+    }
 }
 
 static void fh_to_hex(const nfs_fh3 *fh, char *out)
@@ -294,7 +349,7 @@ static void remove_pid_file(void)
 static void parse_options(int argc, char **argv)
 {
     int opt = 0;
-    char *optstring = "3bcC:de:hl:m:n:prstTuwi:R:H:";
+    char *optstring = "3bcC:de:hl:m:n:prstTuwi:R:H:I:P:";
 
 #if defined(WIN32) || defined(AFS_SUPPORT)
     /* Allways truncate to 32 bits in these cases */
@@ -361,6 +416,8 @@ static void parse_options(int argc, char **argv)
                 printf("\t-T          test exports file and exit\n");
                 printf("\t-R <file>   path to raft log\n");
                 printf("\t-H <file>   path to handle log\n");
+                printf("\t-I <id>     raft node id\n");
+                printf("\t-P <ids>    comma separated raft peer ids\n");
                 exit(0);
                 break;
             case 'l':
@@ -427,6 +484,12 @@ static void parse_options(int argc, char **argv)
                 break;
             case 'H':
                 opt_handle_log = optarg;
+                break;
+            case 'I':
+                opt_raft_id = atoi(optarg);
+                break;
+            case 'P':
+                opt_raft_peers = optarg;
                 break;
             case '?':
                 exit(1);
@@ -636,6 +699,8 @@ void daemon_exit(int error)
     backend_shutdown();
     raft_log_close();
     handle_log_close();
+    if (raft_srv)
+        raft_free(raft_srv);
 
     exit(1);
 }
@@ -1522,6 +1587,7 @@ static void unfs3_svc_run(void)
             return;
         } else if (r)
             svc_getreq_poll(pollfds, r);
+        raft_periodic(raft_srv, 100);
 
 #else
         readfds = svc_fdset;
@@ -1544,6 +1610,7 @@ static void unfs3_svc_run(void)
                 continue;
             default:
                 svc_getreqset(&readfds);
+        raft_periodic(raft_srv, 100);
         }
 #endif
     }
@@ -1621,6 +1688,7 @@ int main(int argc, char **argv)
 
     raft_log_init(opt_raft_log);
     handle_log_init(opt_handle_log);
+    raft_init();
 
     /* init write verifier */
     regenerate_write_verifier();
