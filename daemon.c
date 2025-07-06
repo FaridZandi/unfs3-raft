@@ -98,6 +98,19 @@ int opt_portmapper = TRUE;
 static raft_server_t *raft_srv = NULL;
 static raft_cbs_t raft_cbs;
 
+#define RAFT_PORT_BASE 7000
+#define RAFT_MAX_PKT 2048
+static int raft_sock = -1;
+
+struct raft_peer {
+    int id;
+    struct sockaddr_in addr;
+    raft_node_t *node;
+};
+
+static struct raft_peer raft_peers[16];
+static int raft_peer_count = 0;
+
 /*
  * output message to syslog or stdout
  */
@@ -126,16 +139,111 @@ void logmsg(int prio, const char *fmt, ...)
 
 static int raft_send_requestvote_cb(raft_server_t* raft, void* udata, raft_node_t* node, msg_requestvote_t* msg)
 {
-    (void)raft; (void)udata; (void)msg;
-    logmsg(LOG_DEBUG, "raft: send vote request to %d", raft_node_get_id(node));
+    struct raft_peer *peer = raft_node_get_udata(node);
+    if (!peer)
+        return -1;
+    struct {
+        uint8_t type;
+        msg_requestvote_t rv;
+    } pkt = {1, *msg};
+    sendto(raft_sock, &pkt, sizeof(pkt), 0,
+           (struct sockaddr*)&peer->addr, sizeof(peer->addr));
+    logmsg(LOG_DEBUG, "raft: send vote request to %d", peer->id);
     return 0;
 }
 
 static int raft_send_appendentries_cb(raft_server_t* raft, void* udata, raft_node_t* node, msg_appendentries_t* msg)
 {
-    (void)raft; (void)udata; (void)msg;
-    logmsg(LOG_DEBUG, "raft: send appendentries to %d", raft_node_get_id(node));
+    struct raft_peer *peer = raft_node_get_udata(node);
+    if (!peer)
+        return -1;
+    char buf[RAFT_MAX_PKT];
+    size_t len = 0;
+    struct {
+        uint8_t type;
+        msg_appendentries_t ae;
+        raft_entry_t entry;
+    } *pkt = (void*)buf;
+    pkt->type = 3;
+    pkt->ae = *msg;
+    pkt->ae.entries = NULL;
+    memset(&pkt->entry, 0, sizeof(pkt->entry));
+    len = sizeof(*pkt);
+    if (msg->n_entries > 0) {
+        pkt->entry = msg->entries[0];
+        if (pkt->entry.data.len > 0 &&
+            len + pkt->entry.data.len < sizeof(buf)) {
+            memcpy(buf + len, msg->entries[0].data.buf,
+                   pkt->entry.data.len);
+            len += pkt->entry.data.len;
+        }
+    }
+    sendto(raft_sock, buf, len, 0,
+           (struct sockaddr*)&peer->addr, sizeof(peer->addr));
+    logmsg(LOG_DEBUG, "raft: send appendentries to %d", peer->id);
     return 0;
+}
+
+static struct raft_peer* raft_peer_from_addr(struct sockaddr_in* addr)
+{
+    for (int i = 0; i < raft_peer_count; i++)
+        if (addr->sin_port == raft_peers[i].addr.sin_port &&
+            addr->sin_addr.s_addr == raft_peers[i].addr.sin_addr.s_addr)
+            return &raft_peers[i];
+    return NULL;
+}
+
+static void raft_net_receive(void)
+{
+    char buf[RAFT_MAX_PKT];
+    struct sockaddr_in src;
+    socklen_t slen = sizeof(src);
+    ssize_t n;
+    while ((n = recvfrom(raft_sock, buf, sizeof(buf), MSG_DONTWAIT,
+                         (struct sockaddr*)&src, &slen)) > 0) {
+        struct raft_peer* peer = raft_peer_from_addr(&src);
+        if (!peer)
+            continue;
+        uint8_t type = buf[0];
+        char* ptr = buf + 1;
+        if (type == 1) {
+            msg_requestvote_t rv;
+            memcpy(&rv, ptr, sizeof(rv));
+            msg_requestvote_response_t r;
+            raft_recv_requestvote(raft_srv, peer->node, &rv, &r);
+            struct { uint8_t type; msg_requestvote_response_t r; } out = {2, r};
+            sendto(raft_sock, &out, sizeof(out), 0,
+                   (struct sockaddr*)&src, slen);
+        } else if (type == 2) {
+            msg_requestvote_response_t r;
+            memcpy(&r, ptr, sizeof(r));
+            raft_recv_requestvote_response(raft_srv, peer->node, &r);
+        } else if (type == 3) {
+            struct { msg_appendentries_t ae; raft_entry_t entry; } tmp;
+            if (n < 1 + sizeof(tmp))
+                continue;
+            memcpy(&tmp, ptr, sizeof(tmp));
+            msg_appendentries_t ae = tmp.ae;
+            ae.entries = NULL;
+            raft_entry_t entry = tmp.entry;
+            if (ae.n_entries > 0 && entry.data.len > 0 &&
+                1 + sizeof(tmp) + entry.data.len <= n)
+                entry.data.buf = ptr + sizeof(tmp);
+            else
+                entry.data.buf = NULL;
+            if (ae.n_entries > 0)
+                ae.entries = &entry;
+            msg_appendentries_response_t resp;
+            raft_recv_appendentries(raft_srv, peer->node, &ae, &resp);
+            struct { uint8_t type; msg_appendentries_response_t r; } out = {4, resp};
+            sendto(raft_sock, &out, sizeof(out), 0,
+                   (struct sockaddr*)&src, slen);
+        } else if (type == 4) {
+            msg_appendentries_response_t r;
+            memcpy(&r, ptr, sizeof(r));
+            raft_recv_appendentries_response(raft_srv, peer->node, &r);
+        }
+    }
 }
 
 static int raft_persist_term_cb(raft_server_t* raft, void* udata, raft_term_t term, raft_node_id_t vote)
@@ -158,7 +266,21 @@ static void raft_init(void)
     raft_cbs.persist_term = raft_persist_term_cb;
     raft_cbs.persist_vote = raft_persist_vote_cb;
     raft_set_callbacks(raft_srv, &raft_cbs, NULL);
+
+    raft_sock = socket(AF_INET, SOCK_DGRAM, 0);
+    struct sockaddr_in self = {0};
+    self.sin_family = AF_INET;
+    self.sin_port = htons(RAFT_PORT_BASE + opt_raft_id);
+    self.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    bind(raft_sock, (struct sockaddr*)&self, sizeof(self));
+
     raft_add_node(raft_srv, NULL, opt_raft_id, 1);
+    raft_peers[raft_peer_count].id = opt_raft_id;
+    raft_peers[raft_peer_count].addr = self;
+    raft_peers[raft_peer_count].node = raft_get_node(raft_srv, opt_raft_id);
+    raft_node_set_udata(raft_peers[raft_peer_count].node,
+                        &raft_peers[raft_peer_count]);
+    raft_peer_count++;
 
     if (opt_raft_peers) {
         char *tmp = strdup(opt_raft_peers);
@@ -167,9 +289,16 @@ static void raft_init(void)
             int id = atoi(p);
             if (id != opt_raft_id){
                 logmsg(LOG_INFO, "Adding raft peer %d", id);
-
-                raft_add_node(raft_srv, NULL, id, 0);
-
+                struct sockaddr_in addr = {0};
+                addr.sin_family = AF_INET;
+                addr.sin_port = htons(RAFT_PORT_BASE + id);
+                addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+                raft_node_t* n = raft_add_node(raft_srv, NULL, id, 0);
+                raft_peers[raft_peer_count].id = id;
+                raft_peers[raft_peer_count].addr = addr;
+                raft_peers[raft_peer_count].node = n;
+                raft_node_set_udata(n, &raft_peers[raft_peer_count]);
+                raft_peer_count++;
             }
             p = strtok(NULL, ",");
         }
@@ -1592,6 +1721,7 @@ static void unfs3_svc_run(void)
         } else if (r)
             svc_getreq_poll(pollfds, r);
         raft_periodic(raft_srv, 100);
+        raft_net_receive();
 
 #else
         readfds = svc_fdset;
@@ -1615,6 +1745,7 @@ static void unfs3_svc_run(void)
             default:
                 svc_getreqset(&readfds);
         raft_periodic(raft_srv, 100);
+        raft_net_receive();
         }
 #endif
     }
