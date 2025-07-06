@@ -165,8 +165,12 @@ static void raft_init(void)
         char *p = strtok(tmp, ",");
         while (p) {
             int id = atoi(p);
-            if (id != opt_raft_id)
+            if (id != opt_raft_id){
+                logmsg(LOG_INFO, "Adding raft peer %d", id);
+
                 raft_add_node(raft_srv, NULL, id, 0);
+
+            }
             p = strtok(NULL, ",");
         }
         free(tmp);
@@ -1690,6 +1694,12 @@ int main(int argc, char **argv)
     handle_log_init(opt_handle_log);
     raft_init();
 
+    if(raft_is_leader(raft_srv)) {
+        logmsg(LOG_INFO, "This server is the leader");
+    } else {
+        logmsg(LOG_INFO, "This server is a follower");
+    }
+    
     /* init write verifier */
     regenerate_write_verifier();
 

@@ -8,6 +8,7 @@
 #   • puts   fs.img, exports, handle.log, raft.log, unfsd.pid   in each dir
 #   • mounts each img on  /srv/nfs/shared<i>
 #   • starts unfsd with   -e -H -R -i -n -m  pointing at those files
+#   • passes       -I <id>  -P <peer-list>   (RAFT node-id & peers)
 #
 # REQUIREMENTS: unfsd (UNFS3), losetup, mkfs.ext4, mount.  Run as root
 #               or grant the script CAP_SYS_ADMIN & CAP_NET_BIND_SERVICE.
@@ -34,11 +35,24 @@ mkdir -p "$MOUNT_BASE"
 MOUNT_IMAGE=True
 
 echo "making unfs3-raft executable"
-cd .. 
-make 
+cd ..
+make
 sudo make install
 cd "$WORKDIR"
 
+################################################################################
+# Helper: build a comma-separated list of all IDs except $1
+################################################################################
+peer_list () {
+    local self=$1 total=$2
+    local list=""
+    for j in $(seq 1 "$total"); do
+        [[ $j -eq $self ]] && continue
+        list+="${j},"
+    done
+    # trim trailing comma
+    echo "${list%,}"
+}
 
 for i in $(seq 1 "$NUM"); do
     instdir=$WORKDIR/inst$i
@@ -60,8 +74,7 @@ for i in $(seq 1 "$NUM"); do
     # if mount image is not needed, skip the setup
     if [[ $MOUNT_IMAGE == False ]]; then
         echo "[*] inst$i: skipping image setup, will not mount"
-        echo "$share"       
-
+        echo "$share"
     else
         echo "[*] inst$i: setting up image & mount point"
 
@@ -69,19 +82,30 @@ for i in $(seq 1 "$NUM"); do
         echo "[*] inst$i: creating ${SIZE} MiB image"
         truncate -s "${SIZE}M" "$img"
         mkfs.ext4 -q "$img"
-        
+
         echo "[*] inst$i: mounting image to $share"
         loopdev=$(losetup -f)
         losetup "$loopdev" "$img"
         mount -o loop,sync "$loopdev" "$share"
 
         chown -R faridzandi:dfrancis "$share"
-    fi 
+    fi
 
     echo "$share 10.70.10.108(rw,sync,no_subtree_check,removable,fsid=1)" > "$exports"
 
+    # -------------------------------------------------------------------------
+    # RAFT parameters
+    # -------------------------------------------------------------------------
+    node_id=$i
+    peers=$(peer_list "$i" "$NUM")
+
     echo "[*] inst$i: launching UNFS3 on ports nfs=$nfs_port  mount=$mnt_port"
-    unfsd -d -e "$exports" -i "$pidfile" -n "$nfs_port" -m "$mnt_port" -H "$handle" -R "$raft" > "$instdir/unfsd.out" 2>&1 &
+    echo "            raft: id=$node_id  peers=$peers"
+    unfsd -d \
+          -e "$exports" -i "$pidfile" -n "$nfs_port" -m "$mnt_port" \
+          -H "$handle" -R "$raft" \
+          -I "$node_id" -P "$peers" \
+          > "$instdir/unfsd.out" 2>&1 &
 
     echo $! >> "$GLOBAL_PIDLIST"
     echo "    inst$i OK  →  share=$share"
