@@ -60,6 +60,8 @@
 #include "handle_log.h"
 #include "raft.h"
 
+#include <endian.h>      // htobe64, be64toh
+
 #ifndef SIG_PF
 #define SIG_PF void(*)(int)
 #endif
@@ -137,18 +139,322 @@ void logmsg(int prio, const char *fmt, ...)
     va_end(ap);
 }
 
-static int raft_send_requestvote_cb(raft_server_t* raft, void* udata, raft_node_t* node, msg_requestvote_t* msg)
+// --- Serialization ---
+size_t serialize_requestvote(const msg_requestvote_t* msg, uint8_t* buf) {
+    size_t offset = 0;
+
+    int64_t net_term = htobe64((int64_t)msg->term);
+    memcpy(buf + offset, &net_term, sizeof(net_term));
+    offset += sizeof(net_term);
+
+    int32_t net_candidate_id = htonl((int32_t)msg->candidate_id);
+    memcpy(buf + offset, &net_candidate_id, sizeof(net_candidate_id));
+    offset += sizeof(net_candidate_id);
+
+    int64_t net_last_log_idx = htobe64((int64_t)msg->last_log_idx);
+    memcpy(buf + offset, &net_last_log_idx, sizeof(net_last_log_idx));
+    offset += sizeof(net_last_log_idx);
+
+    int64_t net_last_log_term = htobe64((int64_t)msg->last_log_term);
+    memcpy(buf + offset, &net_last_log_term, sizeof(net_last_log_term));
+    offset += sizeof(net_last_log_term);
+
+    return offset;
+}
+
+// --- Deserialization ---
+size_t deserialize_requestvote(const uint8_t* buf, msg_requestvote_t* msg) {
+    size_t offset = 0;
+
+    int64_t net_term;
+    memcpy(&net_term, buf + offset, sizeof(net_term));
+    msg->term = (raft_term_t)be64toh(net_term);
+    offset += sizeof(net_term);
+
+    int32_t net_candidate_id;
+    memcpy(&net_candidate_id, buf + offset, sizeof(net_candidate_id));
+    msg->candidate_id = (raft_node_id_t)ntohl(net_candidate_id);
+    offset += sizeof(net_candidate_id);
+
+    int64_t net_last_log_idx;
+    memcpy(&net_last_log_idx, buf + offset, sizeof(net_last_log_idx));
+    msg->last_log_idx = (raft_index_t)be64toh(net_last_log_idx);
+    offset += sizeof(net_last_log_idx);
+
+    int64_t net_last_log_term;
+    memcpy(&net_last_log_term, buf + offset, sizeof(net_last_log_term));
+    msg->last_log_term = (raft_term_t)be64toh(net_last_log_term);
+    offset += sizeof(net_last_log_term);
+
+    return offset;
+}
+
+size_t serialize_requestvote_response(const msg_requestvote_response_t* msg, uint8_t* buf) {
+    size_t offset = 0;
+
+    int64_t net_term = htobe64((int64_t)msg->term);
+    memcpy(buf + offset, &net_term, sizeof(net_term));
+    offset += sizeof(net_term);
+
+    int32_t net_vote_granted = htonl((int32_t)msg->vote_granted);
+    memcpy(buf + offset, &net_vote_granted, sizeof(net_vote_granted));
+    offset += sizeof(net_vote_granted);
+
+    return offset;
+}
+
+size_t deserialize_requestvote_response(const uint8_t* buf, msg_requestvote_response_t* msg) {
+    size_t offset = 0;
+
+    int64_t net_term;
+    memcpy(&net_term, buf + offset, sizeof(net_term));
+    msg->term = (raft_term_t)be64toh(net_term);
+    offset += sizeof(net_term);
+
+    int32_t net_vote_granted;
+    memcpy(&net_vote_granted, buf + offset, sizeof(net_vote_granted));
+    msg->vote_granted = (int)ntohl(net_vote_granted);
+    offset += sizeof(net_vote_granted);
+
+    return offset;
+}
+
+
+size_t serialize_appendentries(const msg_appendentries_t* msg, uint8_t* buf) {
+    size_t offset = 0;
+
+    int64_t net_term = htobe64((int64_t)msg->term);
+    memcpy(buf + offset, &net_term, sizeof(net_term));
+    offset += sizeof(net_term);
+
+    int64_t net_prev_log_idx = htobe64((int64_t)msg->prev_log_idx);
+    memcpy(buf + offset, &net_prev_log_idx, sizeof(net_prev_log_idx));
+    offset += sizeof(net_prev_log_idx);
+
+    int64_t net_prev_log_term = htobe64((int64_t)msg->prev_log_term);
+    memcpy(buf + offset, &net_prev_log_term, sizeof(net_prev_log_term));
+    offset += sizeof(net_prev_log_term);
+
+    int64_t net_leader_commit = htobe64((int64_t)msg->leader_commit);
+    memcpy(buf + offset, &net_leader_commit, sizeof(net_leader_commit));
+    offset += sizeof(net_leader_commit);
+
+    int32_t net_n_entries = htonl((int32_t)msg->n_entries);
+    memcpy(buf + offset, &net_n_entries, sizeof(net_n_entries));
+    offset += sizeof(net_n_entries);
+
+    // Entries are not serialized here (pointer).
+    // To serialize entries, you'd loop and call serialize_msg_entry for each.
+
+    return offset;
+}
+
+size_t deserialize_appendentries(const uint8_t* buf, msg_appendentries_t* msg) {
+    size_t offset = 0;
+
+    int64_t net_term;
+    memcpy(&net_term, buf + offset, sizeof(net_term));
+    msg->term = (raft_term_t)be64toh(net_term);
+    offset += sizeof(net_term);
+
+    int64_t net_prev_log_idx;
+    memcpy(&net_prev_log_idx, buf + offset, sizeof(net_prev_log_idx));
+    msg->prev_log_idx = (raft_index_t)be64toh(net_prev_log_idx);
+    offset += sizeof(net_prev_log_idx);
+
+    int64_t net_prev_log_term;
+    memcpy(&net_prev_log_term, buf + offset, sizeof(net_prev_log_term));
+    msg->prev_log_term = (raft_term_t)be64toh(net_prev_log_term);
+    offset += sizeof(net_prev_log_term);
+
+    int64_t net_leader_commit;
+    memcpy(&net_leader_commit, buf + offset, sizeof(net_leader_commit));
+    msg->leader_commit = (raft_index_t)be64toh(net_leader_commit);
+    offset += sizeof(net_leader_commit);
+
+    int32_t net_n_entries;
+    memcpy(&net_n_entries, buf + offset, sizeof(net_n_entries));
+    msg->n_entries = (int)ntohl(net_n_entries);
+    offset += sizeof(net_n_entries);
+
+    msg->entries = NULL; // You will need to deserialize entries yourself if you have any.
+
+    return offset;
+}
+
+
+size_t serialize_appendentries_response(const msg_appendentries_response_t* msg, uint8_t* buf) {
+    size_t offset = 0;
+
+    int64_t net_term = htobe64((int64_t)msg->term);
+    memcpy(buf + offset, &net_term, sizeof(net_term));
+    offset += sizeof(net_term);
+
+    int32_t net_success = htonl((int32_t)msg->success);
+    memcpy(buf + offset, &net_success, sizeof(net_success));
+    offset += sizeof(net_success);
+
+    int64_t net_current_idx = htobe64((int64_t)msg->current_idx);
+    memcpy(buf + offset, &net_current_idx, sizeof(net_current_idx));
+    offset += sizeof(net_current_idx);
+
+    int64_t net_first_idx = htobe64((int64_t)msg->first_idx);
+    memcpy(buf + offset, &net_first_idx, sizeof(net_first_idx));
+    offset += sizeof(net_first_idx);
+
+    return offset;
+}
+
+size_t deserialize_appendentries_response(const uint8_t* buf, msg_appendentries_response_t* msg) {
+    size_t offset = 0;
+
+    int64_t net_term;
+    memcpy(&net_term, buf + offset, sizeof(net_term));
+    msg->term = (raft_term_t)be64toh(net_term);
+    offset += sizeof(net_term);
+
+    int32_t net_success;
+    memcpy(&net_success, buf + offset, sizeof(net_success));
+    msg->success = (int)ntohl(net_success);
+    offset += sizeof(net_success);
+
+    int64_t net_current_idx;
+    memcpy(&net_current_idx, buf + offset, sizeof(net_current_idx));
+    msg->current_idx = (raft_index_t)be64toh(net_current_idx);
+    offset += sizeof(net_current_idx);
+
+    int64_t net_first_idx;
+    memcpy(&net_first_idx, buf + offset, sizeof(net_first_idx));
+    msg->first_idx = (raft_index_t)be64toh(net_first_idx);
+    offset += sizeof(net_first_idx);
+
+    return offset;
+}
+
+
+size_t serialize_msg_entry(const msg_entry_t* entry, uint8_t* buf) {
+    size_t offset = 0;
+
+    // term
+    int64_t net_term = htobe64((int64_t)entry->term);
+    memcpy(buf + offset, &net_term, sizeof(net_term));
+    offset += sizeof(net_term);
+
+    // id
+    int64_t net_id = htobe64((int64_t)entry->id);
+    memcpy(buf + offset, &net_id, sizeof(net_id));
+    offset += sizeof(net_id);
+
+    // type
+    int32_t net_type = htonl(entry->type);
+    memcpy(buf + offset, &net_type, sizeof(net_type));
+    offset += sizeof(net_type);
+
+    // data.len
+    int32_t net_len = htonl((int32_t)entry->data.len);
+    memcpy(buf + offset, &net_len, sizeof(net_len));
+    offset += sizeof(net_len);
+
+    // data.buf
+    if (entry->data.len > 0 && entry->data.buf) {
+        memcpy(buf + offset, entry->data.buf, entry->data.len);
+        offset += entry->data.len;
+    }
+
+    return offset;
+}
+
+
+size_t deserialize_msg_entry(const uint8_t* buf, msg_entry_t* entry) {
+    size_t offset = 0;
+
+    // term
+    int64_t net_term;
+    memcpy(&net_term, buf + offset, sizeof(net_term));
+    entry->term = (raft_term_t)be64toh(net_term);
+    offset += sizeof(net_term);
+
+    // id
+    int64_t net_id;
+    memcpy(&net_id, buf + offset, sizeof(net_id));
+    entry->id = (raft_entry_id_t)be64toh(net_id);
+    offset += sizeof(net_id);
+
+    // type
+    int32_t net_type;
+    memcpy(&net_type, buf + offset, sizeof(net_type));
+    entry->type = (int)ntohl(net_type);
+    offset += sizeof(net_type);
+
+    // data.len
+    int32_t net_len;
+    memcpy(&net_len, buf + offset, sizeof(net_len));
+    entry->data.len = (unsigned int)ntohl(net_len);
+    offset += sizeof(net_len);
+
+    // data.buf
+    if (entry->data.len > 0) {
+        entry->data.buf = malloc(entry->data.len);
+        if (!entry->data.buf) {
+            // handle allocation failure!
+            entry->data.len = 0;
+            return offset; // or exit/error
+        }
+        memcpy(entry->data.buf, buf + offset, entry->data.len);
+        offset += entry->data.len;
+    } else {
+        entry->data.buf = NULL;
+    }
+
+    return offset;
+}
+
+
+size_t serialize_msg_entry_array(const msg_entry_t* entries, int n, uint8_t* buf) {
+    size_t offset = 0;
+    for (int i = 0; i < n; ++i) {
+        offset += serialize_msg_entry(&entries[i], buf + offset);
+    }
+    return offset;
+}
+
+size_t deserialize_msg_entry_array(const uint8_t* buf, int n, msg_entry_t* entries) {
+    size_t offset = 0;
+    for (int i = 0; i < n; ++i) {
+        offset += deserialize_msg_entry(buf + offset, &entries[i]);
+    }
+    return offset;
+}
+
+
+static int raft_send_requestvote_cb(raft_server_t* raft, 
+                                    void* udata, 
+                                    raft_node_t* node, 
+                                    msg_requestvote_t* msg)
 {
     struct raft_peer *peer = raft_node_get_udata(node);
     if (!peer)
         return -1;
-    struct {
-        uint8_t type;
-        msg_requestvote_t rv;
-    } pkt = {1, *msg};
-    sendto(raft_sock, &pkt, sizeof(pkt), 0,
+
+    char buf[RAFT_MAX_PKT];
+    size_t len = 0;
+    buf[len++] = 1; // 1 = RequestVote message
+    len += serialize_requestvote(msg, buf + len);
+
+    ssize_t sent = sendto(raft_sock, buf, len, 0,
            (struct sockaddr*)&peer->addr, sizeof(peer->addr));
-    logmsg(LOG_DEBUG, "raft: send vote request to %d", peer->id);
+    
+    if (sent < 0) {
+        logmsg(LOG_ERR, "raft: sendto failed: %s", strerror(errno));
+        return -1;
+    } else if (sent < len) {
+        logmsg(LOG_WARNING, "raft: sent only %zd bytes, expected %zu bytes",
+               sent, len);
+    } else {
+        logmsg(LOG_DEBUG, "raft: send requestvote to %d, term %ld, candidate %d",
+               peer->id, msg->term, msg->candidate_id);
+    }
+    
     return 0;
 }
 
@@ -157,30 +463,29 @@ static int raft_send_appendentries_cb(raft_server_t* raft, void* udata, raft_nod
     struct raft_peer *peer = raft_node_get_udata(node);
     if (!peer)
         return -1;
-    char buf[RAFT_MAX_PKT];
+    uint8_t buf[RAFT_MAX_PKT];
     size_t len = 0;
-    struct {
-        uint8_t type;
-        msg_appendentries_t ae;
-        raft_entry_t entry;
-    } *pkt = (void*)buf;
-    pkt->type = 3;
-    pkt->ae = *msg;
-    pkt->ae.entries = NULL;
-    memset(&pkt->entry, 0, sizeof(pkt->entry));
-    len = sizeof(*pkt);
-    if (msg->n_entries > 0) {
-        pkt->entry = msg->entries[0];
-        if (pkt->entry.data.len > 0 &&
-            len + pkt->entry.data.len < sizeof(buf)) {
-            memcpy(buf + len, msg->entries[0].data.buf,
-                   pkt->entry.data.len);
-            len += pkt->entry.data.len;
-        }
+
+    // 1. Write message type
+    buf[len++] = 3; // AppendEntries
+
+    // 2. Serialize the AppendEntries header (does NOT serialize entries!)
+    len += serialize_appendentries(msg, buf + len);
+
+    if (msg->n_entries > 0 && msg->entries) {
+        len += serialize_msg_entry_array(msg->entries, msg->n_entries, buf + len);
     }
-    sendto(raft_sock, buf, len, 0,
-           (struct sockaddr*)&peer->addr, sizeof(peer->addr));
-    logmsg(LOG_DEBUG, "raft: send appendentries to %d", peer->id);
+
+    // 4. Send the whole buffer
+    ssize_t sent = sendto(raft_sock, buf, len, 0, (struct sockaddr*)&peer->addr, sizeof(peer->addr));
+    if (sent != len) {
+        logmsg(LOG_WARNING, "raft: sendto incomplete: sent %zd, expected %zu", sent, len);
+        return -1;
+    }
+
+    logmsg(LOG_DEBUG, "raft: send appendentries to %d, term %ld, prev_log_idx %ld, prev_log_term %ld, leader_commit %ld, n_entries %d",
+        peer->id, msg->term, msg->prev_log_idx, msg->prev_log_term, msg->leader_commit, msg->n_entries);
+
     return 0;
 }
 
@@ -201,46 +506,105 @@ static void raft_net_receive(void)
     ssize_t n;
     while ((n = recvfrom(raft_sock, buf, sizeof(buf), MSG_DONTWAIT,
                          (struct sockaddr*)&src, &slen)) > 0) {
+
+        logmsg(LOG_DEBUG, "raft: received %zd bytes from %s:%d",
+               n, inet_ntoa(src.sin_addr), ntohs(src.sin_port));
+
         struct raft_peer* peer = raft_peer_from_addr(&src);
         if (!peer)
             continue;
         uint8_t type = buf[0];
         char* ptr = buf + 1;
         if (type == 1) {
-            msg_requestvote_t rv;
-            memcpy(&rv, ptr, sizeof(rv));
-            msg_requestvote_response_t r;
-            raft_recv_requestvote(raft_srv, peer->node, &rv, &r);
-            struct { uint8_t type; msg_requestvote_response_t r; } out = {2, r};
-            sendto(raft_sock, &out, sizeof(out), 0,
+            logmsg(LOG_DEBUG, "raft: received requestvote from peerid=%d, %s:%d",
+                     peer->id, inet_ntoa(src.sin_addr), ntohs(src.sin_port));
+            
+            msg_requestvote_t req;
+            deserialize_requestvote(buf + 1, &req);
+
+            logmsg(LOG_DEBUG, "raft: received requestvote from peerid=%d, term %ld, candidate %d, last_log_idx %ld, last_log_term %ld",
+                   peer->id, req.term, req.candidate_id, req.last_log_idx, req.last_log_term);
+
+            msg_requestvote_response_t resp;
+            raft_recv_requestvote(raft_srv, peer->node, &req, &resp);
+
+            char resp_buf[RAFT_MAX_PKT];
+            size_t len = 0;
+
+            resp_buf[len++] = 2;  // type = 2 for RequestVoteResponse
+            len += serialize_requestvote_response(&resp, resp_buf + len);
+            
+            sendto(raft_sock, resp_buf, len, 0,
                    (struct sockaddr*)&src, slen);
+            
+            logmsg(LOG_DEBUG, "raft: sent requestvote response to %d, term %ld, vote %d",
+                   peer->id, resp.term, resp.vote_granted);
+
         } else if (type == 2) {
+            logmsg(LOG_DEBUG, "raft: received requestvote response from peerid=%d, %s:%d",
+                   peer->id, inet_ntoa(src.sin_addr), ntohs(src.sin_port));
+            
             msg_requestvote_response_t r;
-            memcpy(&r, ptr, sizeof(r));
+            deserialize_requestvote_response(ptr, &r);
+
+            logmsg(LOG_DEBUG, "raft: received requestvote response from peerid=%d, term %ld, vote %d",
+                   peer->id, r.term, r.vote_granted);
+            
             raft_recv_requestvote_response(raft_srv, peer->node, &r);
         } else if (type == 3) {
-            struct { msg_appendentries_t ae; raft_entry_t entry; } tmp;
-            if (n < 1 + sizeof(tmp))
-                continue;
-            memcpy(&tmp, ptr, sizeof(tmp));
-            msg_appendentries_t ae = tmp.ae;
-            ae.entries = NULL;
-            raft_entry_t entry = tmp.entry;
-            if (ae.n_entries > 0 && entry.data.len > 0 &&
-                1 + sizeof(tmp) + entry.data.len <= n)
-                entry.data.buf = ptr + sizeof(tmp);
-            else
-                entry.data.buf = NULL;
-            if (ae.n_entries > 0)
-                ae.entries = &entry;
+            logmsg(LOG_DEBUG, "raft: received appendentries from %s:%d",
+                inet_ntoa(src.sin_addr), ntohs(src.sin_port));
+
+            msg_appendentries_t ae;
+            size_t offset = 0;
+
+            // Deserialize the header
+            offset += deserialize_appendentries(ptr, &ae);
+
+            // Deserialize entries (if any)
+            msg_entry_t *entries = NULL;
+            if (ae.n_entries > 0) {
+                entries = calloc(ae.n_entries, sizeof(msg_entry_t));
+                if (!entries) {
+                    logmsg(LOG_ERR, "raft: failed to allocate entries array");
+                    return;
+                }
+                offset += deserialize_msg_entry_array(ptr + offset, ae.n_entries, entries);
+                ae.entries = entries;
+            } else {
+                ae.entries = NULL;
+            }
+
+            // Prepare response
             msg_appendentries_response_t resp;
             raft_recv_appendentries(raft_srv, peer->node, &ae, &resp);
-            struct { uint8_t type; msg_appendentries_response_t r; } out = {4, resp};
-            sendto(raft_sock, &out, sizeof(out), 0,
-                   (struct sockaddr*)&src, slen);
+
+            // Free allocated entries data
+            for (int i = 0; i < ae.n_entries; ++i) {
+                if (entries[i].data.buf) free(entries[i].data.buf);
+            }
+            free(entries);
+
+            // Serialize response
+            uint8_t resp_buf[64];
+            size_t resp_len = 0;
+            resp_buf[resp_len++] = 4; // type = AppendEntriesResponse
+            resp_len += serialize_appendentries_response(&resp, resp_buf + resp_len);
+
+            sendto(raft_sock, resp_buf, resp_len, 0, (struct sockaddr*)&src, slen);
+
+            logmsg(LOG_DEBUG, "raft: sent appendentries response to %d, term %ld, success %d",
+                peer->id, resp.term, resp.success);
         } else if (type == 4) {
+            logmsg(LOG_DEBUG, "raft: received appendentries response from %s:%d",
+                inet_ntoa(src.sin_addr), ntohs(src.sin_port));
+
             msg_appendentries_response_t r;
-            memcpy(&r, ptr, sizeof(r));
+            deserialize_appendentries_response(ptr, &r);
+
+            logmsg(LOG_DEBUG, "raft: appendentries response: term %ld, success %d, current_idx %ld, first_idx %ld",
+                r.term, r.success, r.current_idx, r.first_idx);
+
             raft_recv_appendentries_response(raft_srv, peer->node, &r);
         }
     }
@@ -249,12 +613,16 @@ static void raft_net_receive(void)
 static int raft_persist_term_cb(raft_server_t* raft, void* udata, raft_term_t term, raft_node_id_t vote)
 {
     (void)raft; (void)udata; (void)term; (void)vote;
+    logmsg(LOG_DEBUG, "raft: persist term %llu, vote %d", 
+           (unsigned long long)term, vote);   
+
     return 0;
 }
 
 static int raft_persist_vote_cb(raft_server_t* raft, void* udata, raft_node_id_t vote)
 {
     (void)raft; (void)udata; (void)vote;
+    logmsg(LOG_DEBUG, "raft: persist vote %d", vote);   
     return 0;
 }
 
@@ -281,6 +649,8 @@ static void raft_init(void)
     raft_node_set_udata(raft_peers[raft_peer_count].node,
                         &raft_peers[raft_peer_count]);
     raft_peer_count++;
+    
+
 
     if (opt_raft_peers) {
         char *tmp = strdup(opt_raft_peers);
@@ -1711,7 +2081,7 @@ static void unfs3_svc_run(void)
             pollfds[i].revents = 0;
         }
 
-        r = poll(pollfds, svc_max_pollfd, 2*1000);
+        r = poll(pollfds, svc_max_pollfd, 100);
         if (r < 0) {
             if (errno == EINTR) {
                 continue;
@@ -1720,8 +2090,20 @@ static void unfs3_svc_run(void)
             return;
         } else if (r)
             svc_getreq_poll(pollfds, r);
+
+
         raft_periodic(raft_srv, 100);
         raft_net_receive();
+
+        // Am I the leader?
+        if (raft_is_leader(raft_srv)) {
+            logmsg(LOG_INFO, "I am the leader, processing raft events");
+        } else if (raft_is_follower(raft_srv)) {
+            logmsg(LOG_INFO, "I am a follower, the current leader is %d",
+                   raft_get_current_leader(raft_srv));   
+        } else {
+            logmsg(LOG_INFO, "I am a candidate, waiting for votes");
+        }
 
 #else
         readfds = svc_fdset;
@@ -1824,12 +2206,6 @@ int main(int argc, char **argv)
     raft_log_init(opt_raft_log);
     handle_log_init(opt_handle_log);
     raft_init();
-
-    if(raft_is_leader(raft_srv)) {
-        logmsg(LOG_INFO, "This server is the leader");
-    } else {
-        logmsg(LOG_INFO, "This server is a follower");
-    }
     
     /* init write verifier */
     regenerate_write_verifier();
