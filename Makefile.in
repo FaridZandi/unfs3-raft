@@ -6,9 +6,9 @@ VERSION = @PACKAGE_VERSION@
 RM = rm -f
 MAKE = make
 
-SOURCES = afsgettimes.c afssupport.c attr.c daemon.c error.c fd_cache.c fh.c fh_cache.c locate.c \
+SOURCES = afsgettimes.c afssupport.c attr.c daemon.c daemon_raft.c error.c fd_cache.c fh.c fh_cache.c locate.c \
          md5.c mount.c nfs.c password.c readdir.c user.c xdr.c winsupport.c raft_log.c handle_log.c
-OBJS = afsgettimes.o afssupport.o attr.o daemon.o error.o fd_cache.o fh.o fh_cache.o locate.o \
+OBJS = afsgettimes.o afssupport.o attr.o daemon.o daemon_raft.o error.o fd_cache.o fh.o fh_cache.o locate.o \
        md5.o mount.o nfs.o password.o readdir.o user.o xdr.o winsupport.o raft_log.o handle_log.o
 CONFOBJ = Config/lib.a
 EXTRAOBJ = @EXTRAOBJ@
@@ -133,7 +133,7 @@ unfs3-$(VERSION).tar.gz:
 	 unfs3-$(VERSION)/contrib/nfsotpclient/nfsotpclient.py \
 	 unfs3-$(VERSION)/contrib/nfsotpclient/rpc.py \
 	 unfs3-$(VERSION)/contrib/rpcproxy/rpcproxy \
-	 unfs3-$(VERSION)/daemon.c \
+	 unfs3-$(VERSION)/daemon.c daemon_raft.c \
 	 unfs3-$(VERSION)/daemon.h \
 	 unfs3-$(VERSION)/doc/README.win \
 	 unfs3-$(VERSION)/doc/TODO \
