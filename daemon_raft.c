@@ -330,7 +330,11 @@ static int raft_send_requestvote_cb(raft_server_t* raft, void* udata, raft_node_
     return 0;
 }
 
-static int raft_send_appendentries_cb(raft_server_t* raft, void* udata, raft_node_t* node, msg_appendentries_t* msg) {
+static int raft_send_appendentries_cb(raft_server_t* raft, 
+                                      void* udata, 
+                                      raft_node_t* node, 
+                                      msg_appendentries_t* msg) {
+
     struct raft_peer *peer = raft_node_get_udata(node);
     if (!peer)
         return -1;
@@ -362,105 +366,167 @@ static struct raft_peer* raft_peer_from_addr(struct sockaddr_in* addr) {
     return NULL;
 }
 
+static handle_requestvote(const struct raft_peer* peer, 
+                          char* ptr, 
+                          struct sockaddr_in* src, 
+                          socklen_t slen);
+
+static handle_requestvote_response(const struct raft_peer* peer, 
+                                   char* ptr);
+
+static handle_appendentries(const struct raft_peer* peer, 
+                            char* ptr, 
+                            struct sockaddr_in* src, 
+                            socklen_t slen);   
+
+static handle_appendentries_response(const struct raft_peer* peer, 
+                                     char* ptr);   
+
+
+// Main dispatcher:
 void raft_net_receive(void) {
     char buf[RAFT_MAX_PKT];
     struct sockaddr_in src;
     socklen_t slen = sizeof(src);
     ssize_t n;
-    while ((n = recvfrom(raft_sock, buf, sizeof(buf), MSG_DONTWAIT, (struct sockaddr*)&src, &slen)) > 0) {
-        logmsg(LOG_DEBUG, "raft: received %zd bytes from %s:%d", n, inet_ntoa(src.sin_addr), ntohs(src.sin_port));
+    while ((n = recvfrom(raft_sock, buf, sizeof(buf), MSG_DONTWAIT, 
+                         (struct sockaddr*)&src, &slen)) > 0) {
+        logmsg(LOG_DEBUG, "raft: received %zd bytes from %s:%d", 
+                          n, inet_ntoa(src.sin_addr), ntohs(src.sin_port));
 
         struct raft_peer* peer = raft_peer_from_addr(&src);
         if (!peer)
             continue;
+
         uint8_t type = buf[0];
         char* ptr = buf + 1;
-        if (type == 1) {
-            logmsg(LOG_DEBUG, "raft: received requestvote from peerid=%d, %s:%d", peer->id, inet_ntoa(src.sin_addr), ntohs(src.sin_port));
-
-            msg_requestvote_t req;
-            deserialize_requestvote(buf + 1, &req);
-
-            logmsg(LOG_DEBUG, "raft: received requestvote from peerid=%d, term %ld, candidate %d, last_log_idx %ld, last_log_term %ld", peer->id, req.term, req.candidate_id, req.last_log_idx, req.last_log_term);
-
-            msg_requestvote_response_t resp;
-            raft_recv_requestvote(raft_srv, peer->node, &req, &resp);
-
-            char resp_buf[RAFT_MAX_PKT];
-            size_t len = 0;
-
-            resp_buf[len++] = 2;
-            len += serialize_requestvote_response(&resp, resp_buf + len);
-
-            sendto(raft_sock, resp_buf, len, 0, (struct sockaddr*)&src, slen);
-
-            logmsg(LOG_DEBUG, "raft: sent requestvote response to %d, term %ld, vote %d", peer->id, resp.term, resp.vote_granted);
-        } else if (type == 2) {
-            logmsg(LOG_DEBUG, "raft: received requestvote response from peerid=%d, %s:%d", peer->id, inet_ntoa(src.sin_addr), ntohs(src.sin_port));
-
-            msg_requestvote_response_t r;
-            deserialize_requestvote_response(ptr, &r);
-
-            logmsg(LOG_DEBUG, "raft: received requestvote response from peerid=%d, term %ld, vote %d", peer->id, r.term, r.vote_granted);
-
-            raft_recv_requestvote_response(raft_srv, peer->node, &r);
-        } else if (type == 3) {
-            logmsg(LOG_DEBUG, "raft: received appendentries from %s:%d", inet_ntoa(src.sin_addr), ntohs(src.sin_port));
-
-            msg_appendentries_t ae;
-            size_t offset = 0;
-
-            offset += deserialize_appendentries(ptr, &ae);
-
-            msg_entry_t *entries = NULL;
-            if (ae.n_entries > 0) {
-                entries = calloc(ae.n_entries, sizeof(msg_entry_t));
-                if (!entries) {
-                    logmsg(LOG_ERR, "raft: failed to allocate entries array");
-                    return;
-                }
-                offset += deserialize_msg_entry_array(ptr + offset, ae.n_entries, entries);
-                ae.entries = entries;
-            } else {
-                ae.entries = NULL;
-            }
-
-            msg_appendentries_response_t resp;
-            raft_recv_appendentries(raft_srv, peer->node, &ae, &resp);
-
-            for (int i = 0; i < ae.n_entries; ++i) {
-                if (entries[i].data.buf) free(entries[i].data.buf);
-            }
-            free(entries);
-
-            uint8_t resp_buf[64];
-            size_t resp_len = 0;
-            resp_buf[resp_len++] = 4;
-            resp_len += serialize_appendentries_response(&resp, resp_buf + resp_len);
-
-            sendto(raft_sock, resp_buf, resp_len, 0, (struct sockaddr*)&src, slen);
-
-            logmsg(LOG_DEBUG, "raft: sent appendentries response to %d, term %ld, success %d", peer->id, resp.term, resp.success);
-        } else if (type == 4) {
-            logmsg(LOG_DEBUG, "raft: received appendentries response from %s:%d", inet_ntoa(src.sin_addr), ntohs(src.sin_port));
-
-            msg_appendentries_response_t r;
-            deserialize_appendentries_response(ptr, &r);
-
-            logmsg(LOG_DEBUG, "raft: appendentries response: term %ld, success %d, current_idx %ld, first_idx %ld", r.term, r.success, r.current_idx, r.first_idx);
-
-            raft_recv_appendentries_response(raft_srv, peer->node, &r);
+        switch (type) {
+            case 1:
+                handle_requestvote(peer, ptr, &src, slen);
+                break;
+            case 2:
+                handle_requestvote_response(peer, ptr);
+                break;
+            case 3:
+                handle_appendentries(peer, ptr, &src, slen);
+                break;
+            case 4:
+                handle_appendentries_response(peer, ptr);
+                break;
+            default:
+                logmsg(LOG_WARNING, "raft: received unknown message type %d from %s:%d", 
+                                    type, inet_ntoa(src.sin_addr), ntohs(src.sin_port));
+                break;
         }
     }
 }
 
-static int raft_persist_term_cb(raft_server_t* raft, void* udata, raft_term_t term, raft_node_id_t vote) {
+// ---- Type handlers ----
+
+static void handle_requestvote(const struct raft_peer* peer, 
+                               char* ptr, 
+                               struct sockaddr_in* src, 
+                               socklen_t slen) {
+
+    logmsg(LOG_DEBUG, "raft: received requestvote from peerid=%d, %s:%d", peer->id, inet_ntoa(src->sin_addr), ntohs(src->sin_port));
+
+    msg_requestvote_t req;
+    deserialize_requestvote(ptr, &req);
+
+    logmsg(LOG_DEBUG, "raft: received requestvote from peerid=%d, term %ld, candidate %d, last_log_idx %ld, last_log_term %ld", peer->id, req.term, req.candidate_id, req.last_log_idx, req.last_log_term);
+
+    msg_requestvote_response_t resp;
+    raft_recv_requestvote(raft_srv, peer->node, &req, &resp);
+
+    char resp_buf[RAFT_MAX_PKT];
+    size_t len = 0;
+
+    resp_buf[len++] = 2;
+    len += serialize_requestvote_response(&resp, resp_buf + len);
+
+    sendto(raft_sock, resp_buf, len, 0, (struct sockaddr*)src, slen);
+
+    logmsg(LOG_DEBUG, "raft: sent requestvote response to %d, term %ld, vote %d", peer->id, resp.term, resp.vote_granted);
+}
+
+static void handle_requestvote_response(const struct raft_peer* peer, 
+                                        char* ptr) {
+    logmsg(LOG_DEBUG, "raft: received requestvote response from peerid=%d", peer->id);
+
+    msg_requestvote_response_t r;
+    deserialize_requestvote_response(ptr, &r);
+
+    logmsg(LOG_DEBUG, "raft: received requestvote response from peerid=%d, term %ld, vote %d", peer->id, r.term, r.vote_granted);
+
+    raft_recv_requestvote_response(raft_srv, peer->node, &r);
+}
+
+static void handle_appendentries(const struct raft_peer* peer, char* ptr, struct sockaddr_in* src, socklen_t slen) {
+    logmsg(LOG_DEBUG, "raft: received appendentries from %s:%d", inet_ntoa(src->sin_addr), ntohs(src->sin_port));
+
+    msg_appendentries_t ae;
+    size_t offset = 0;
+
+    offset += deserialize_appendentries(ptr, &ae);
+
+    msg_entry_t *entries = NULL;
+    if (ae.n_entries > 0) {
+        entries = calloc(ae.n_entries, sizeof(msg_entry_t));
+        if (!entries) {
+            logmsg(LOG_ERR, "raft: failed to allocate entries array");
+            return;
+        }
+        offset += deserialize_msg_entry_array(ptr + offset, ae.n_entries, entries);
+        ae.entries = entries;
+    } else {
+        ae.entries = NULL;
+    }
+
+    msg_appendentries_response_t resp;
+    raft_recv_appendentries(raft_srv, peer->node, &ae, &resp);
+
+    for (int i = 0; i < ae.n_entries; ++i) {
+        if (entries[i].data.buf) free(entries[i].data.buf);
+    }
+    free(entries);
+
+    uint8_t resp_buf[64];
+    size_t resp_len = 0;
+    resp_buf[resp_len++] = 4;
+    resp_len += serialize_appendentries_response(&resp, resp_buf + resp_len);
+
+    sendto(raft_sock, resp_buf, resp_len, 0, (struct sockaddr*)src, slen);
+
+    logmsg(LOG_DEBUG, "raft: sent appendentries response to %d, term %ld, success %d", peer->id, resp.term, resp.success);
+}
+
+static void handle_appendentries_response(const struct raft_peer* peer, 
+                                          char* ptr) {
+    logmsg(LOG_DEBUG, "raft: received appendentries response from peerid=%d", peer->id);
+
+    msg_appendentries_response_t r;
+    deserialize_appendentries_response(ptr, &r);
+
+    logmsg(LOG_DEBUG, "raft: appendentries response: term %ld, success %d, current_idx %ld, first_idx %ld", r.term, r.success, r.current_idx, r.first_idx);
+
+    raft_recv_appendentries_response(raft_srv, peer->node, &r);
+}
+
+
+static int raft_persist_term_cb(raft_server_t* raft, 
+                                void* udata, 
+                                raft_term_t term, 
+                                raft_node_id_t vote) {
+
     (void)raft; (void)udata; (void)term; (void)vote;
     logmsg(LOG_DEBUG, "raft: persist term %llu, vote %d", (unsigned long long)term, vote);
     return 0;
 }
 
-static int raft_persist_vote_cb(raft_server_t* raft, void* udata, raft_node_id_t vote) {
+static int raft_persist_vote_cb(raft_server_t* raft, 
+                                void* udata, 
+                                raft_node_id_t vote) {
+
     (void)raft; (void)udata; (void)vote;
     logmsg(LOG_DEBUG, "raft: persist vote %d", vote);
     return 0;

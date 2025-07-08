@@ -1568,6 +1568,7 @@ static void unfs3_svc_run(void)
                 continue;
             default:
                 svc_getreqset(&readfds);
+                
         raft_periodic(raft_srv, 100);
         raft_net_receive();
         }
