@@ -34,7 +34,6 @@
 #include <time.h>
 #include <unistd.h>
 #include <errno.h>
-#include <unistd.h>
 #ifdef HAVE_LIBPROC_H
 #include <libproc.h>
 #endif
@@ -94,6 +93,25 @@ char *opt_handle_log = "handle.log";
 
 /* Register with portmapper? */
 int opt_portmapper = TRUE;
+
+/* Wait for leader election before starting NFS services */
+static void wait_for_leader(void)
+{
+    logmsg(LOG_INFO, "waiting for Raft leader election");
+    while (raft_get_current_leader(raft_srv) == -1) {
+        raft_periodic(raft_srv, 100);
+        raft_net_receive();
+        usleep(100000); /* 100ms */
+    }
+
+    int leader = raft_get_current_leader(raft_srv);
+    logmsg(LOG_INFO, "Raft leader elected: %d", leader);
+    if (raft_is_leader(raft_srv)) {
+        logmsg(LOG_INFO, "This node is the leader; binding to port 2049");
+        opt_nfs_port = 2049;
+        opt_mount_port = 2049;
+    }
+}
 void logmsg(int prio, const char *fmt, ...)
 {
     va_list ap;
@@ -1649,6 +1667,7 @@ int main(int argc, char **argv)
     raft_log_init(opt_raft_log);
     handle_log_init(opt_handle_log);
     raft_init();
+    wait_for_leader();
     
     /* init write verifier */
     regenerate_write_verifier();
