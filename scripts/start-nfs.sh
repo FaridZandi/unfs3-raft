@@ -18,8 +18,8 @@ set -euo pipefail
 NUM=${1:-3}                  # how many daemons
 SIZE=${2:-1024}              # size of each image (MiB)
 
-BASE_NFS_PORT=2049           # NFS   port for instance 1
-BASE_MNT_PORT=2049           # mount port for instance 1 (avoid <1024)
+BASE_NFS_PORT=2050           # NFS   port for instance 1
+BASE_MNT_PORT=2050           # mount port for instance 1 (avoid <1024)
 
 WORKDIR=$(pwd)               # where the script is run
 MOUNT_BASE=/srv/nfs          # parent for visible shares
