@@ -366,22 +366,21 @@ static struct raft_peer* raft_peer_from_addr(struct sockaddr_in* addr) {
     return NULL;
 }
 
-static handle_requestvote(const struct raft_peer* peer, 
+static void handle_requestvote(const struct raft_peer* peer, 
                           char* ptr, 
                           struct sockaddr_in* src, 
                           socklen_t slen);
 
-static handle_requestvote_response(const struct raft_peer* peer, 
+static void handle_requestvote_response(const struct raft_peer* peer, 
                                    char* ptr);
 
-static handle_appendentries(const struct raft_peer* peer, 
+static void handle_appendentries(const struct raft_peer* peer, 
                             char* ptr, 
                             struct sockaddr_in* src, 
                             socklen_t slen);   
 
-static handle_appendentries_response(const struct raft_peer* peer, 
-                                     char* ptr);   
-
+static void handle_appendentries_response(const struct raft_peer* peer, 
+                                          char* ptr);   
 
 // Main dispatcher:
 void raft_net_receive(void) {
