@@ -12,6 +12,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <endian.h>
+#include <stdint.h>
 
 #include "daemon.h"
 #include "raft_log.h"
@@ -522,12 +523,58 @@ static int raft_persist_term_cb(raft_server_t* raft,
     return 0;
 }
 
-static int raft_persist_vote_cb(raft_server_t* raft, 
-                                void* udata, 
+static int raft_persist_vote_cb(raft_server_t* raft,
+                                void* udata,
                                 raft_node_id_t vote) {
 
     (void)raft; (void)udata; (void)vote;
     logmsg(LOG_DEBUG, "raft: persist vote %d", vote);
+    return 0;
+}
+
+static int raft_log_offer_cb(raft_server_t* raft,
+                             void* udata,
+                             raft_entry_t* entry,
+                             raft_index_t entry_idx) {
+    (void)raft; (void)udata; (void)entry_idx;
+
+    if (entry->data.len >= sizeof(uint32_t)) {
+        uint32_t proc;
+        memcpy(&proc, entry->data.buf, sizeof(proc));
+        proc = ntohl(proc);
+        raft_log_entry(proc, (char*)entry->data.buf + sizeof(proc),
+                       entry->data.len - sizeof(proc));
+    }
+    return 0;
+}
+
+static int raft_log_poll_cb(raft_server_t* raft,
+                            void* udata,
+                            raft_entry_t* entry,
+                            raft_index_t entry_idx) {
+    (void)raft; (void)udata; (void)entry; (void)entry_idx;
+    return 0;
+}
+
+static int raft_log_pop_cb(raft_server_t* raft,
+                           void* udata,
+                           raft_entry_t* entry,
+                           raft_index_t entry_idx) {
+    (void)raft; (void)udata; (void)entry; (void)entry_idx;
+    return 0;
+}
+
+static int raft_applylog_cb(raft_server_t* raft,
+                            void* udata,
+                            raft_entry_t* entry,
+                            raft_index_t entry_idx) {
+    (void)raft; (void)udata; (void)entry_idx;
+    if (entry->data.len >= sizeof(uint32_t)) {
+        uint32_t proc;
+        memcpy(&proc, entry->data.buf, sizeof(proc));
+        proc = ntohl(proc);
+        raft_log("apply log idx %lu proc %u", (unsigned long)entry_idx, proc);
+    }
     return 0;
 }
 
@@ -537,6 +584,10 @@ void raft_init(void) {
     raft_cbs.send_appendentries = raft_send_appendentries_cb;
     raft_cbs.persist_term = raft_persist_term_cb;
     raft_cbs.persist_vote = raft_persist_vote_cb;
+    raft_cbs.log_offer = raft_log_offer_cb;
+    raft_cbs.log_poll = raft_log_poll_cb;
+    raft_cbs.log_pop = raft_log_pop_cb;
+    raft_cbs.applylog = raft_applylog_cb;
     raft_set_callbacks(raft_srv, &raft_cbs, NULL);
 
     raft_sock = socket(AF_INET, SOCK_DGRAM, 0);
