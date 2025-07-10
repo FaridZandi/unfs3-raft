@@ -54,6 +54,7 @@ echo "[*] removing instance directories: $WORKDIR/inst*"
 echo "removing: "
 find "$WORKDIR" -maxdepth 1 -type d -name 'inst*' -print
 rm -rf "$WORKDIR"/inst*
+rm -rf "$WORKDIR"/global
 
 echo "All UNFS3 instances stopped and cleaned up."
 echo "You can now safely run ./start-nfs.sh to start fresh instances."

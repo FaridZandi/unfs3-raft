@@ -1515,6 +1515,8 @@ static SVCXPRT *create_tcp_transport(unsigned int port)
     return transp;
 }
 
+#define mytimout 1000 /* 1 second timeout for svc_getreqset() */
+
 /* Run RPC service. This is our own implementation of svc_run(), which
    allows us to handle other events as well. */
 static void unfs3_svc_run(void)
@@ -1547,7 +1549,7 @@ static void unfs3_svc_run(void)
             pollfds[i].revents = 0;
         }
 
-        r = poll(pollfds, svc_max_pollfd, 100);
+        r = poll(pollfds, svc_max_pollfd, mytimout);
         if (r < 0) {
             if (errno == EINTR) {
                 continue;
@@ -1558,7 +1560,7 @@ static void unfs3_svc_run(void)
             svc_getreq_poll(pollfds, r);
 
 
-        raft_periodic(raft_srv, 100);
+        raft_periodic(raft_srv, mytimout);
         raft_net_receive();
 
         // Am I the leader?
@@ -1569,6 +1571,13 @@ static void unfs3_svc_run(void)
                    raft_get_current_leader(raft_srv));   
         } else {
             logmsg(LOG_INFO, "I am a candidate, waiting for votes");
+            // I voted for who? 
+            int voted_for = raft_get_voted_for(raft_srv);
+            if (voted_for != -1) {
+                logmsg(LOG_INFO, "I voted for %d", voted_for);
+            } else {
+                logmsg(LOG_INFO, "I have not voted yet");
+            }
         }
 
 #else
@@ -1674,6 +1683,7 @@ int main(int argc, char **argv)
     create_pid_file();
 
     raft_init();
+    raft_set_election_timeout(raft_srv, opt_raft_id * mytimout + mytimout);
     wait_for_leader();
 
     raft_log_init(opt_raft_log);
