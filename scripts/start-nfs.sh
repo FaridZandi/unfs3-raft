@@ -54,8 +54,21 @@ peer_list () {
     echo "${list%,}"
 }
 
-for i in $(seq 1 "$NUM"); do
-    instdir=$WORKDIR/inst$i
+for i in $(seq 0 "$NUM"); do
+    if [[ $i -eq 0 ]]; then
+        echo "special case: leader stuff." 
+        instdir=$WORKDIR/global
+    else
+        echo "starting instance $i"
+        instdir=$WORKDIR/inst$i
+    fi      
+
+    if [[ $i -eq 0 ]]; then
+        share="$MOUNT_BASE/shared"
+    else
+        share="$MOUNT_BASE/shared$i"
+    fi  
+
     mkdir -p "$instdir"
 
     img=$instdir/fs.img
@@ -64,7 +77,6 @@ for i in $(seq 1 "$NUM"); do
     raft=$instdir/raft.log
     pidfile=$instdir/unfsd.pid
 
-    share=$MOUNT_BASE/shared$i
     nfs_port=$((BASE_NFS_PORT + i - 1))
     mnt_port=$((BASE_MNT_PORT + i - 1))
 
@@ -91,26 +103,31 @@ for i in $(seq 1 "$NUM"); do
         chown -R faridzandi:dfrancis "$share"
     fi
 
-    echo "$share 10.70.10.108(rw,sync,no_subtree_check,removable,fsid=1)" > "$exports"
+    echo "$share 10.70.10.108(rw,sync,no_subtree_check,removable)" > "$exports"
 
     # -------------------------------------------------------------------------
     # RAFT parameters
     # -------------------------------------------------------------------------
-    node_id=$i
-    peers=$(peer_list "$i" "$NUM")
 
-    echo "[*] inst$i: launching UNFS3 on ports nfs=$nfs_port  mount=$mnt_port"
-    echo "            raft: id=$node_id  peers=$peers"
-    unfsd -d \
-          -e "$exports" -i "$pidfile" -n "$nfs_port" -m "$mnt_port" \
-          -H "$handle" -R "$raft" \
-          -I "$node_id" -P "$peers" \
-          > "$instdir/unfsd.out" 2>&1 &
+    # only if i > 1 
+    if [[ $i -eq 0 ]]; then
+        echo "[*] global instance, skipping raft setup"
+    else
+        node_id=$i
+        peers=$(peer_list "$i" "$NUM")
 
-    echo $! >> "$GLOBAL_PIDLIST"
-    this_pid=$!
-    echo "    inst$i OK  →  share=$share, pid=$this_pid"
+        echo "[*] inst$i: launching UNFS3 on ports nfs=$nfs_port  mount=$mnt_port"
+        echo "            raft: id=$node_id  peers=$peers"
+        unfsd -d \
+            -e "$exports" -i "$pidfile" -n "$nfs_port" -m "$mnt_port" \
+            -H "$handle" -R "$raft" \
+            -I "$node_id" -P "$peers" \
+            > "$instdir/unfsd.out" 2>&1 &
 
+        echo $! >> "$GLOBAL_PIDLIST"
+        this_pid=$!
+        echo "    inst$i OK  →  share=$share, pid=$this_pid, exports=$exports"  
+    fi
 done
 
 echo

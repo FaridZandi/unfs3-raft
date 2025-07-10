@@ -108,19 +108,15 @@ static void wait_for_leader(void)
     logmsg(LOG_INFO, "Raft leader elected: %d", leader);
     if (raft_is_leader(raft_srv)) {
         logmsg(LOG_INFO, "This node is the leader; binding to port 2049");
+        opt_exports = "/home/faridzandi/git/unfs3-raft/scripts/global/exports";
         opt_nfs_port = 2049;
         opt_mount_port = 2049;
     }
 
-    // // wait for a while. 10 second. 
-    for (int i = 0; i < 100; i++) {
-        raft_periodic(raft_srv, 100);
-        raft_net_receive();
-        usleep(100000); /* 100ms */
-    }
-
     logmsg(LOG_INFO, "Raft leader election complete, going live!");
 }
+
+
 void logmsg(int prio, const char *fmt, ...)
 {
     va_list ap;
@@ -1677,10 +1673,12 @@ int main(int argc, char **argv)
     /* create pid file if wanted */
     create_pid_file();
 
-    raft_log_init(opt_raft_log);
-    handle_log_init(opt_handle_log);
     raft_init();
     wait_for_leader();
+
+    raft_log_init(opt_raft_log);
+    handle_log_init(opt_handle_log);
+
     
     /* init write verifier */
     regenerate_write_verifier();
