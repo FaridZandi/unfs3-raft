@@ -11,7 +11,7 @@ MOUNT_BASE=/srv/nfs
 for pidfile in "$WORKDIR"/inst*/unfsd.pid; do
     [[ -e $pidfile ]] || continue
     pid=$(cat "$pidfile")
-    echo "[*] killing unfsd pid $pid"
+    echo "[*] killing unfsd pid $pid" in "$pidfile"
     kill "$pid" 2>/dev/null || true
 done
 

@@ -108,7 +108,8 @@ for i in $(seq 1 "$NUM"); do
           > "$instdir/unfsd.out" 2>&1 &
 
     echo $! >> "$GLOBAL_PIDLIST"
-    echo "    inst$i OK  →  share=$share"  # give it a moment to start
+    this_pid=$!
+    echo "    inst$i OK  →  share=$share, pid=$this_pid"
 
 done
 

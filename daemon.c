@@ -111,6 +111,15 @@ static void wait_for_leader(void)
         opt_nfs_port = 2049;
         opt_mount_port = 2049;
     }
+
+    // // wait for a while. 10 second. 
+    for (int i = 0; i < 100; i++) {
+        raft_periodic(raft_srv, 100);
+        raft_net_receive();
+        usleep(100000); /* 100ms */
+    }
+
+    logmsg(LOG_INFO, "Raft leader election complete, going live!");
 }
 void logmsg(int prio, const char *fmt, ...)
 {
@@ -1252,6 +1261,7 @@ static void _register_service(SVCXPRT *transp,
     }
 
     if (!svc_reg(transp, prognum, versnum, dispatch, nconf)) {
+            
         fprintf(stderr, "Unable to register (%s, %s, %s).\n",
                 progname, versname, netid);
         daemon_exit(0);
@@ -1664,6 +1674,9 @@ int main(int argc, char **argv)
         exit(1);
     }
 
+    /* create pid file if wanted */
+    create_pid_file();
+
     raft_log_init(opt_raft_log);
     handle_log_init(opt_handle_log);
     raft_init();
@@ -1698,7 +1711,8 @@ int main(int argc, char **argv)
     if (!opt_tcponly)
         udptransp = create_udp_transport(opt_nfs_port);
     tcptransp = create_tcp_transport(opt_nfs_port);
-
+    
+    logmsg(LOG_INFO, "NFS server starting on port %d", opt_nfs_port);
     register_nfs_service(udptransp, tcptransp);
 
     /* MOUNT transports. If ports are equal, then the MOUNT service can reuse
@@ -1708,7 +1722,9 @@ int main(int argc, char **argv)
             udptransp = create_udp_transport(opt_mount_port);
         tcptransp = create_tcp_transport(opt_mount_port);
     }
-
+    
+    logmsg(LOG_INFO, "MOUNT server starting on port %d", opt_mount_port);
+    
     register_mount_service(udptransp, tcptransp);
 
 #ifndef WIN32
@@ -1770,8 +1786,7 @@ int main(int argc, char **argv)
         /* no umask to not screw up create modes */
         umask(0);
 
-        /* create pid file if wanted */
-        create_pid_file();
+
 
         /* initialize internal stuff */
         fh_cache_init();
