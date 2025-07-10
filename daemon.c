@@ -91,6 +91,15 @@ char *opt_pid_file = NULL;
 int opt_32_bit_truncate = FALSE;
 char *opt_handle_log = "handle.log";
 
+/* Global RPC transport handles so we can re-register services */
+static SVCXPRT *nfs_udptransp = NULL;
+static SVCXPRT *nfs_tcptransp = NULL;
+static SVCXPRT *mount_udptransp = NULL;
+static SVCXPRT *mount_tcptransp = NULL;
+static int was_leader = 0;
+
+#define LEADER_EXPORTS_PATH "/home/faridzandi/git/unfs3-raft/scripts/global/exports"
+
 /* Register with portmapper? */
 int opt_portmapper = TRUE;
 
@@ -1515,6 +1524,48 @@ static SVCXPRT *create_tcp_transport(unsigned int port)
     return transp;
 }
 
+/* Take over NFS and MOUNT services when this node becomes leader */
+static void become_leader(void)
+{
+    opt_exports = LEADER_EXPORTS_PATH;
+    opt_nfs_port = 2049;
+    opt_mount_port = 2049;
+
+    if (nfs_udptransp)
+        svc_destroy(nfs_udptransp);
+    if (nfs_tcptransp)
+        svc_destroy(nfs_tcptransp);
+    if (mount_udptransp && mount_udptransp != nfs_udptransp)
+        svc_destroy(mount_udptransp);
+    if (mount_tcptransp && mount_tcptransp != nfs_tcptransp)
+        svc_destroy(mount_tcptransp);
+
+    if (!opt_tcponly)
+        nfs_udptransp = create_udp_transport(opt_nfs_port);
+    else
+        nfs_udptransp = NULL;
+    nfs_tcptransp = create_tcp_transport(opt_nfs_port);
+
+    logmsg(LOG_INFO, "Leader binding NFS service to port %d", opt_nfs_port);
+    register_nfs_service(nfs_udptransp, nfs_tcptransp);
+
+    if (opt_mount_port != opt_nfs_port) {
+        if (!opt_tcponly)
+            mount_udptransp = create_udp_transport(opt_mount_port);
+        else
+            mount_udptransp = NULL;
+        mount_tcptransp = create_tcp_transport(opt_mount_port);
+    } else {
+        mount_udptransp = nfs_udptransp;
+        mount_tcptransp = nfs_tcptransp;
+    }
+
+    logmsg(LOG_INFO, "Leader binding MOUNT service to port %d", opt_mount_port);
+    register_mount_service(mount_udptransp, mount_tcptransp);
+
+    exports_parse();
+}
+
 #define mytimout 1000 /* 1 second timeout for svc_getreqset() */
 
 /* Run RPC service. This is our own implementation of svc_run(), which
@@ -1563,21 +1614,25 @@ static void unfs3_svc_run(void)
         raft_periodic(raft_srv, mytimout);
         raft_net_receive();
 
-        // Am I the leader?
-        if (raft_is_leader(raft_srv)) {
+        int am_leader = raft_is_leader(raft_srv);
+        if (am_leader && !was_leader) {
+            logmsg(LOG_INFO, "Leadership acquired, re-registering services");
+            become_leader();
+        }
+        was_leader = am_leader;
+
+        if (am_leader) {
             logmsg(LOG_INFO, "I am the leader, processing raft events");
         } else if (raft_is_follower(raft_srv)) {
             logmsg(LOG_INFO, "I am a follower, the current leader is %d",
-                   raft_get_current_leader(raft_srv));   
+                   raft_get_current_leader(raft_srv));
         } else {
             logmsg(LOG_INFO, "I am a candidate, waiting for votes");
-            // I voted for who? 
             int voted_for = raft_get_voted_for(raft_srv);
-            if (voted_for != -1) {
+            if (voted_for != -1)
                 logmsg(LOG_INFO, "I voted for %d", voted_for);
-            } else {
+            else
                 logmsg(LOG_INFO, "I have not voted yet");
-            }
         }
 
 #else
@@ -1604,6 +1659,13 @@ static void unfs3_svc_run(void)
                 
         raft_periodic(raft_srv, 100);
         raft_net_receive();
+
+        int am_leader_sel = raft_is_leader(raft_srv);
+        if (am_leader_sel && !was_leader) {
+            logmsg(LOG_INFO, "Leadership acquired, re-registering services");
+            become_leader();
+        }
+        was_leader = am_leader_sel;
         }
 #endif
     }
@@ -1685,6 +1747,7 @@ int main(int argc, char **argv)
     raft_init();
     raft_set_election_timeout(raft_srv, opt_raft_id * mytimout + mytimout);
     wait_for_leader();
+    was_leader = raft_is_leader(raft_srv);
 
     raft_log_init(opt_raft_log);
     handle_log_init(opt_handle_log);
@@ -1719,9 +1782,12 @@ int main(int argc, char **argv)
     if (!opt_tcponly)
         udptransp = create_udp_transport(opt_nfs_port);
     tcptransp = create_tcp_transport(opt_nfs_port);
+
+    nfs_udptransp = udptransp;
+    nfs_tcptransp = tcptransp;
     
     logmsg(LOG_INFO, "NFS server starting on port %d", opt_nfs_port);
-    register_nfs_service(udptransp, tcptransp);
+    register_nfs_service(nfs_udptransp, nfs_tcptransp);
 
     /* MOUNT transports. If ports are equal, then the MOUNT service can reuse
        the NFS transports. */
@@ -1730,10 +1796,13 @@ int main(int argc, char **argv)
             udptransp = create_udp_transport(opt_mount_port);
         tcptransp = create_tcp_transport(opt_mount_port);
     }
+
+    mount_udptransp = (opt_mount_port != opt_nfs_port) ? udptransp : nfs_udptransp;
+    mount_tcptransp = (opt_mount_port != opt_nfs_port) ? tcptransp : nfs_tcptransp;
     
     logmsg(LOG_INFO, "MOUNT server starting on port %d", opt_mount_port);
-    
-    register_mount_service(udptransp, tcptransp);
+
+    register_mount_service(mount_udptransp, mount_tcptransp);
 
 #ifndef WIN32
     if (opt_detach) {
