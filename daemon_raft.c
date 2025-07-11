@@ -12,6 +12,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <endian.h>
+#include <stdint.h>
 
 #include "daemon.h"
 #include "raft_log.h"
@@ -470,6 +471,8 @@ static void handle_appendentries(const struct raft_peer* peer, char* ptr, struct
 
     msg_entry_t *entries = NULL;
     if (ae.n_entries > 0) {
+        logmsg(LOG_DEBUG, "raft: going to deserialize %d entries, 29038409238409", ae.n_entries);
+
         entries = calloc(ae.n_entries, sizeof(msg_entry_t));
         if (!entries) {
             logmsg(LOG_ERR, "raft: failed to allocate entries array");
@@ -482,7 +485,11 @@ static void handle_appendentries(const struct raft_peer* peer, char* ptr, struct
     }
 
     msg_appendentries_response_t resp;
+    logmsg(LOG_DEBUG, "raft: received appendentries from peerid=%d, term %ld, prev_log_idx %ld, prev_log_term %ld, leader_commit %ld, n_entries %d", 
+                          peer->id, ae.term, ae.prev_log_idx, ae.prev_log_term, ae.leader_commit, ae.n_entries);
     raft_recv_appendentries(raft_srv, peer->node, &ae, &resp);
+    logmsg(LOG_DEBUG, "raft: appendentries response: term %ld, success %d, current_idx %ld, first_idx %ld", 
+                          resp.term, resp.success, resp.current_idx, resp.first_idx);
 
     for (int i = 0; i < ae.n_entries; ++i) {
         if (entries[i].data.buf) free(entries[i].data.buf);
@@ -522,12 +529,70 @@ static int raft_persist_term_cb(raft_server_t* raft,
     return 0;
 }
 
-static int raft_persist_vote_cb(raft_server_t* raft, 
-                                void* udata, 
+static int raft_persist_vote_cb(raft_server_t* raft,
+                                void* udata,
                                 raft_node_id_t vote) {
 
     (void)raft; (void)udata; (void)vote;
     logmsg(LOG_DEBUG, "raft: persist vote %d", vote);
+    return 0;
+}
+
+static int raft_log_offer_cb(raft_server_t* raft,
+                             void* udata,
+                             raft_entry_t* entry,
+                             raft_index_t entry_idx) {
+    (void)raft; (void)udata; (void)entry_idx;
+    logmsg(LOG_DEBUG, "raft: log offer callback called, idx %lu, term %llu, id %llu, type %d",
+           (unsigned long)entry_idx,
+           (unsigned long long)entry->term,
+           (unsigned long long)entry->id,
+           entry->type);    
+
+    if (entry->data.len >= sizeof(uint32_t)) {
+        uint32_t proc;
+        memcpy(&proc, entry->data.buf, sizeof(proc));
+        proc = ntohl(proc);
+        raft_log_entry(proc, (char*)entry->data.buf + sizeof(proc),
+                       entry->data.len - sizeof(proc));
+    }
+    return 0;
+}
+
+static int raft_log_poll_cb(raft_server_t* raft,
+                            void* udata,
+                            raft_entry_t* entry,
+                            raft_index_t entry_idx) {
+    logmsg(LOG_DEBUG, "raft: log poll callback called, idx %lu, term %llu", 
+              (unsigned long)entry_idx, (unsigned long long)entry->term);    
+    return 0;
+}
+
+static int raft_log_pop_cb(raft_server_t* raft,
+                           void* udata,
+                           raft_entry_t* entry,
+                           raft_index_t entry_idx) {
+    logmsg(LOG_DEBUG, "raft: log pop callback called, idx %lu, term %llu",
+           (unsigned long)entry_idx, (unsigned long long)entry->term);
+    return 0;
+}
+
+static int raft_applylog_cb(raft_server_t* raft,
+                            void* udata,
+                            raft_entry_t* entry,
+                            raft_index_t entry_idx) {
+    logmsg(LOG_DEBUG, "raft: apply log callback called, idx %lu, term %llu",
+           (unsigned long)entry_idx, (unsigned long long)entry->term);
+
+    if (entry->data.len >= sizeof(uint32_t)) {
+        uint32_t proc;
+        memcpy(&proc, entry->data.buf, sizeof(proc));
+        proc = ntohl(proc);
+
+        logmsg(LOG_DEBUG, "raft: applying log idx %lu proc %u, data len %u",
+              (unsigned long)entry_idx, proc, entry->data.len - sizeof(proc));
+        // raft_log("apply log idx %lu proc %u", (unsigned long)entry_idx, proc);
+    }
     return 0;
 }
 
@@ -537,6 +602,10 @@ void raft_init(void) {
     raft_cbs.send_appendentries = raft_send_appendentries_cb;
     raft_cbs.persist_term = raft_persist_term_cb;
     raft_cbs.persist_vote = raft_persist_vote_cb;
+    raft_cbs.log_offer = raft_log_offer_cb;
+    raft_cbs.log_poll = raft_log_poll_cb;
+    raft_cbs.log_pop = raft_log_pop_cb;
+    raft_cbs.applylog = raft_applylog_cb;
     raft_set_callbacks(raft_srv, &raft_cbs, NULL);
 
     raft_sock = socket(AF_INET, SOCK_DGRAM, 0);

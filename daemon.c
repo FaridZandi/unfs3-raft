@@ -895,27 +895,40 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
      */
     // preprocess_handles(rqstp->rq_proc, &argument, rqstp);
     
-    /* Serialize arguments for replication */
-    // u_int arg_len = xdr_sizeof(_xdr_argument, (char *)&argument);
-    // if (arg_len > 0) {
-    //     char *buf = malloc(arg_len);
-    //     if (buf) {
-    //         XDR xdrs;
-    //         xdrmem_create(&xdrs, buf, arg_len, XDR_ENCODE);
-    //         if (((xdrproc_t)_xdr_argument)(&xdrs, (char *)&argument)) {
-    //             /*
-    //              * Logged buffers still contain file handles which are local to
-    //              * this server. Followers reconstruct handles from the textual
-    //              * path information logged below.
-    //              */
-    //             raft_log_entry(rqstp->rq_proc, buf, arg_len);
-    //         }
-    //         xdr_destroy(&xdrs);
-    //         free(buf);
-    //     }
-    // }
+    /* Serialize and replicate the operation using Raft */
+    if (raft_is_leader(raft_srv)) {
+        u_int arg_len = xdr_sizeof(_xdr_argument, (char *)&argument);
+        if (arg_len > 0) {
+            char *buf = malloc(arg_len + sizeof(uint32_t));
+            if (buf) {
+                uint32_t proc = htonl(rqstp->rq_proc);
+                memcpy(buf, &proc, sizeof(proc));
 
-    result = (*local) ((char *) &argument, rqstp);
+                XDR xdrs;
+                xdrmem_create(&xdrs, buf + sizeof(proc), arg_len, XDR_ENCODE);
+                if (((xdrproc_t)_xdr_argument)(&xdrs, (char *)&argument)) {
+                    msg_entry_t ety = {0};
+                    ety.data.buf = buf;
+                    ety.data.len = arg_len + sizeof(proc);
+                    ety.id = raft_get_current_idx(raft_srv) + 1;
+                    ety.type = RAFT_LOGTYPE_NORMAL;
+
+                    msg_entry_response_t resp;
+                    if (0 == raft_recv_entry(raft_srv, &ety, &resp)) {
+                        while (raft_get_commit_idx(raft_srv) < resp.idx) {
+                            raft_periodic(raft_srv, 100);
+                            raft_net_receive();
+                        }
+                        raft_apply_all(raft_srv);
+                    }
+                }
+                xdr_destroy(&xdrs);
+                free(buf);
+            }
+        }
+    }
+
+    result = (*local)((char *)&argument, rqstp);
 
 
     /* Create log entry for modifying operations */
