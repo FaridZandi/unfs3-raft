@@ -53,6 +53,10 @@ void raft_log_entry(uint32_t proc, const void *data, uint32_t len)
     fwrite(&hdr, sizeof(hdr), 1, raft_log_fp);
     if (len > 0 && data != NULL)
         fwrite(data, len, 1, raft_log_fp);
+
+    fwrite("\n", 1, 1, raft_log_fp); // Newline for readability
+    fwrite("\n", 1, 1, raft_log_fp); // Newline for readability
+    
     fflush(raft_log_fp);
 }
 

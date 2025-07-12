@@ -591,7 +591,6 @@ static int raft_applylog_cb(raft_server_t* raft,
 
         logmsg(LOG_DEBUG, "raft: applying log idx %lu proc %u, data len %u",
               (unsigned long)entry_idx, proc, entry->data.len - sizeof(proc));
-        // raft_log("apply log idx %lu proc %u", (unsigned long)entry_idx, proc);
     }
     return 0;
 }

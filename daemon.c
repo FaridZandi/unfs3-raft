@@ -713,6 +713,7 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
         PATHCONF3args nfsproc3_pathconf_3_arg;
         COMMIT3args nfsproc3_commit_3_arg;
     } argument;
+    
     char *result;
     xdrproc_t _xdr_argument, _xdr_result;
     char *(*local) (char *, struct svc_req *);
@@ -926,161 +927,164 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
                 free(buf);
             }
         }
+    } else {
+        logmsg(LOG_INFO, "Not a leader, shouldn't receive NFS requests");
+        exit(1); 
     }
 
     result = (*local)((char *)&argument, rqstp);
 
 
-    /* Create log entry for modifying operations */
-    switch (rqstp->rq_proc) {
-        case NFSPROC3_LOOKUP: {
-            char *path = fh_decomp(argument.nfsproc3_lookup_3_arg.what.dir);
-            raft_log("LOOKUP %s/%s", path ? path : "?",
-                     argument.nfsproc3_lookup_3_arg.what.name);
-            LOOKUP3res *res = (LOOKUP3res *)result;
-            if (res && res->status == NFS3_OK && path) {
-                char full[NFS_MAXPATHLEN];
-                snprintf(full, sizeof(full), "%s/%s", path,
-                         argument.nfsproc3_lookup_3_arg.what.name);
-                handle_log_record(remote_host, full,
-                                  &res->LOOKUP3res_u.resok.object);
-                char hex[FH_MAXBUF * 2 + 1];
-                fh_to_hex(&res->LOOKUP3res_u.resok.object, hex);
-                logmsg(LOG_INFO, "LOOKUP result handle %s for %s", hex, full);
-            }
-            break;
-        }
-        case NFSPROC3_WRITE: {
-            char *path = fh_decomp(argument.nfsproc3_write_3_arg.file);
-            raft_log("WRITE %s %llu %u", path ? path : "?",
-                     (unsigned long long)argument.nfsproc3_write_3_arg.offset,
-                     (unsigned int)argument.nfsproc3_write_3_arg.count);
-            break;
-        }
-        case NFSPROC3_CREATE: {
-            char *path = fh_decomp(argument.nfsproc3_create_3_arg.where.dir);
-            raft_log("CREATE %s/%s", path ? path : "?",
-                     argument.nfsproc3_create_3_arg.where.name);
-            CREATE3res *res = (CREATE3res *)result;
-            if (res && res->status == NFS3_OK && path) {
-                char full[NFS_MAXPATHLEN];
-                snprintf(full, sizeof(full), "%s/%s", path,
-                         argument.nfsproc3_create_3_arg.where.name);
-                handle_log_record(remote_host, full,
-                                  &res->CREATE3res_u.resok.obj.post_op_fh3_u.handle);
-                char hex[FH_MAXBUF * 2 + 1];
-                fh_to_hex(&res->CREATE3res_u.resok.obj.post_op_fh3_u.handle, hex);
-                logmsg(LOG_INFO, "CREATE result handle %s for %s", hex, full);
-            }
-            break;
-        }
-        case NFSPROC3_MKDIR: {
-            char *path = fh_decomp(argument.nfsproc3_mkdir_3_arg.where.dir);
-            raft_log("MKDIR %s/%s", path ? path : "?",
-                     argument.nfsproc3_mkdir_3_arg.where.name);
-            MKDIR3res *res = (MKDIR3res *)result;
-            if (res && res->status == NFS3_OK && path) {
-                char full[NFS_MAXPATHLEN];
-                snprintf(full, sizeof(full), "%s/%s", path,
-                         argument.nfsproc3_mkdir_3_arg.where.name);
-                handle_log_record(remote_host, full,
-                                  &res->MKDIR3res_u.resok.obj.post_op_fh3_u.handle);
-                char hex[FH_MAXBUF * 2 + 1];
-                fh_to_hex(&res->MKDIR3res_u.resok.obj.post_op_fh3_u.handle, hex);
-                logmsg(LOG_INFO, "MKDIR result handle %s for %s", hex, full);
-            }
-            break;
-        }
-        case NFSPROC3_SYMLINK: {
-            char *path = fh_decomp(argument.nfsproc3_symlink_3_arg.where.dir);
-            raft_log("SYMLINK %s/%s", path ? path : "?",
-                     argument.nfsproc3_symlink_3_arg.where.name);
-            SYMLINK3res *res = (SYMLINK3res *)result;
-            if (res && res->status == NFS3_OK && path) {
-                char full[NFS_MAXPATHLEN];
-                snprintf(full, sizeof(full), "%s/%s", path,
-                         argument.nfsproc3_symlink_3_arg.where.name);
-                handle_log_record(remote_host, full,
-                                  &res->SYMLINK3res_u.resok.obj.post_op_fh3_u.handle);
-                char hex[FH_MAXBUF * 2 + 1];
-                fh_to_hex(&res->SYMLINK3res_u.resok.obj.post_op_fh3_u.handle, hex);
-                logmsg(LOG_INFO, "SYMLINK result handle %s for %s", hex, full);
-            }
-            break;
-        }
-        case NFSPROC3_MKNOD: {
-            char *path = fh_decomp(argument.nfsproc3_mknod_3_arg.where.dir);
-            raft_log("MKNOD %s/%s", path ? path : "?",
-                     argument.nfsproc3_mknod_3_arg.where.name);
-            MKNOD3res *res = (MKNOD3res *)result;
-            if (res && res->status == NFS3_OK && path) {
-                char full[NFS_MAXPATHLEN];
-                snprintf(full, sizeof(full), "%s/%s", path,
-                         argument.nfsproc3_mknod_3_arg.where.name);
-                handle_log_record(remote_host, full,
-                                  &res->MKNOD3res_u.resok.obj.post_op_fh3_u.handle);
-                char hex[FH_MAXBUF * 2 + 1];
-                fh_to_hex(&res->MKNOD3res_u.resok.obj.post_op_fh3_u.handle, hex);
-                logmsg(LOG_INFO, "MKNOD result handle %s for %s", hex, full);
-            }
-            break;
-        }
-        case NFSPROC3_REMOVE: {
-            char *path = fh_decomp(argument.nfsproc3_remove_3_arg.object.dir);
-            raft_log("REMOVE %s/%s", path ? path : "?",
-                     argument.nfsproc3_remove_3_arg.object.name);
-            REMOVE3res *res = (REMOVE3res *)result;
-            if (res && res->status == NFS3_OK && path) {
-                char full[NFS_MAXPATHLEN];
-                snprintf(full, sizeof(full), "%s/%s", path,
-                         argument.nfsproc3_remove_3_arg.object.name);
-                handle_log_record_remove(remote_host, full);
-            }
-            break;
-        }
-        case NFSPROC3_RMDIR: {
-            char *path = fh_decomp(argument.nfsproc3_rmdir_3_arg.object.dir);
-            raft_log("RMDIR %s/%s", path ? path : "?",
-                     argument.nfsproc3_rmdir_3_arg.object.name);
-            RMDIR3res *res = (RMDIR3res *)result;
-            if (res && res->status == NFS3_OK && path) {
-                char full[NFS_MAXPATHLEN];
-                snprintf(full, sizeof(full), "%s/%s", path,
-                         argument.nfsproc3_rmdir_3_arg.object.name);
-                handle_log_record_remove(remote_host, full);
-            }
-            break;
-        }
-        case NFSPROC3_RENAME: {
-            char *from = fh_decomp(argument.nfsproc3_rename_3_arg.from.dir);
-            char *to = fh_decomp(argument.nfsproc3_rename_3_arg.to.dir);
-            raft_log("RENAME %s/%s -> %s/%s", from ? from : "?",
-                     argument.nfsproc3_rename_3_arg.from.name,
-                     to ? to : "?",
-                     argument.nfsproc3_rename_3_arg.to.name);
-            RENAME3res *res = (RENAME3res *)result;
-            if (res && res->status == NFS3_OK && from && to) {
-                char old[NFS_MAXPATHLEN];
-                char newp[NFS_MAXPATHLEN];
-                snprintf(old, sizeof(old), "%s/%s", from,
-                         argument.nfsproc3_rename_3_arg.from.name);
-                snprintf(newp, sizeof(newp), "%s/%s", to,
-                         argument.nfsproc3_rename_3_arg.to.name);
-                handle_log_record_rename(remote_host, old, newp);
-            }
-            break;
-        }
-        case NFSPROC3_LINK: {
-            char *path = fh_decomp(argument.nfsproc3_link_3_arg.link.dir);
-            char *src = fh_decomp(argument.nfsproc3_link_3_arg.file);
-            raft_log("LINK %s -> %s/%s", src ? src : "?",
-                     path ? path : "?",
-                     argument.nfsproc3_link_3_arg.link.name);
-            break;
-        }
-        default:
-            break;
-    }
+    // /* Create log entry for modifying operations */
+    // switch (rqstp->rq_proc) {
+    //     case NFSPROC3_LOOKUP: {
+    //         char *path = fh_decomp(argument.nfsproc3_lookup_3_arg.what.dir);
+    //         raft_log("LOOKUP %s/%s", path ? path : "?",
+    //                  argument.nfsproc3_lookup_3_arg.what.name);
+    //         LOOKUP3res *res = (LOOKUP3res *)result;
+    //         if (res && res->status == NFS3_OK && path) {
+    //             char full[NFS_MAXPATHLEN];
+    //             snprintf(full, sizeof(full), "%s/%s", path,
+    //                      argument.nfsproc3_lookup_3_arg.what.name);
+    //             handle_log_record(remote_host, full,
+    //                               &res->LOOKUP3res_u.resok.object);
+    //             char hex[FH_MAXBUF * 2 + 1];
+    //             fh_to_hex(&res->LOOKUP3res_u.resok.object, hex);
+    //             logmsg(LOG_INFO, "LOOKUP result handle %s for %s", hex, full);
+    //         }
+    //         break;
+    //     }
+    //     case NFSPROC3_WRITE: {
+    //         char *path = fh_decomp(argument.nfsproc3_write_3_arg.file);
+    //         raft_log("WRITE %s %llu %u", path ? path : "?",
+    //                  (unsigned long long)argument.nfsproc3_write_3_arg.offset,
+    //                  (unsigned int)argument.nfsproc3_write_3_arg.count);
+    //         break;
+    //     }
+    //     case NFSPROC3_CREATE: {
+    //         char *path = fh_decomp(argument.nfsproc3_create_3_arg.where.dir);
+    //         raft_log("CREATE %s/%s", path ? path : "?",
+    //                  argument.nfsproc3_create_3_arg.where.name);
+    //         CREATE3res *res = (CREATE3res *)result;
+    //         if (res && res->status == NFS3_OK && path) {
+    //             char full[NFS_MAXPATHLEN];
+    //             snprintf(full, sizeof(full), "%s/%s", path,
+    //                      argument.nfsproc3_create_3_arg.where.name);
+    //             handle_log_record(remote_host, full,
+    //                               &res->CREATE3res_u.resok.obj.post_op_fh3_u.handle);
+    //             char hex[FH_MAXBUF * 2 + 1];
+    //             fh_to_hex(&res->CREATE3res_u.resok.obj.post_op_fh3_u.handle, hex);
+    //             logmsg(LOG_INFO, "CREATE result handle %s for %s", hex, full);
+    //         }
+    //         break;
+    //     }
+    //     case NFSPROC3_MKDIR: {
+    //         char *path = fh_decomp(argument.nfsproc3_mkdir_3_arg.where.dir);
+    //         raft_log("MKDIR %s/%s", path ? path : "?",
+    //                  argument.nfsproc3_mkdir_3_arg.where.name);
+    //         MKDIR3res *res = (MKDIR3res *)result;
+    //         if (res && res->status == NFS3_OK && path) {
+    //             char full[NFS_MAXPATHLEN];
+    //             snprintf(full, sizeof(full), "%s/%s", path,
+    //                      argument.nfsproc3_mkdir_3_arg.where.name);
+    //             handle_log_record(remote_host, full,
+    //                               &res->MKDIR3res_u.resok.obj.post_op_fh3_u.handle);
+    //             char hex[FH_MAXBUF * 2 + 1];
+    //             fh_to_hex(&res->MKDIR3res_u.resok.obj.post_op_fh3_u.handle, hex);
+    //             logmsg(LOG_INFO, "MKDIR result handle %s for %s", hex, full);
+    //         }
+    //         break;
+    //     }
+    //     case NFSPROC3_SYMLINK: {
+    //         char *path = fh_decomp(argument.nfsproc3_symlink_3_arg.where.dir);
+    //         raft_log("SYMLINK %s/%s", path ? path : "?",
+    //                  argument.nfsproc3_symlink_3_arg.where.name);
+    //         SYMLINK3res *res = (SYMLINK3res *)result;
+    //         if (res && res->status == NFS3_OK && path) {
+    //             char full[NFS_MAXPATHLEN];
+    //             snprintf(full, sizeof(full), "%s/%s", path,
+    //                      argument.nfsproc3_symlink_3_arg.where.name);
+    //             handle_log_record(remote_host, full,
+    //                               &res->SYMLINK3res_u.resok.obj.post_op_fh3_u.handle);
+    //             char hex[FH_MAXBUF * 2 + 1];
+    //             fh_to_hex(&res->SYMLINK3res_u.resok.obj.post_op_fh3_u.handle, hex);
+    //             logmsg(LOG_INFO, "SYMLINK result handle %s for %s", hex, full);
+    //         }
+    //         break;
+    //     }
+    //     case NFSPROC3_MKNOD: {
+    //         char *path = fh_decomp(argument.nfsproc3_mknod_3_arg.where.dir);
+    //         raft_log("MKNOD %s/%s", path ? path : "?",
+    //                  argument.nfsproc3_mknod_3_arg.where.name);
+    //         MKNOD3res *res = (MKNOD3res *)result;
+    //         if (res && res->status == NFS3_OK && path) {
+    //             char full[NFS_MAXPATHLEN];
+    //             snprintf(full, sizeof(full), "%s/%s", path,
+    //                      argument.nfsproc3_mknod_3_arg.where.name);
+    //             handle_log_record(remote_host, full,
+    //                               &res->MKNOD3res_u.resok.obj.post_op_fh3_u.handle);
+    //             char hex[FH_MAXBUF * 2 + 1];
+    //             fh_to_hex(&res->MKNOD3res_u.resok.obj.post_op_fh3_u.handle, hex);
+    //             logmsg(LOG_INFO, "MKNOD result handle %s for %s", hex, full);
+    //         }
+    //         break;
+    //     }
+    //     case NFSPROC3_REMOVE: {
+    //         char *path = fh_decomp(argument.nfsproc3_remove_3_arg.object.dir);
+    //         raft_log("REMOVE %s/%s", path ? path : "?",
+    //                  argument.nfsproc3_remove_3_arg.object.name);
+    //         REMOVE3res *res = (REMOVE3res *)result;
+    //         if (res && res->status == NFS3_OK && path) {
+    //             char full[NFS_MAXPATHLEN];
+    //             snprintf(full, sizeof(full), "%s/%s", path,
+    //                      argument.nfsproc3_remove_3_arg.object.name);
+    //             handle_log_record_remove(remote_host, full);
+    //         }
+    //         break;
+    //     }
+    //     case NFSPROC3_RMDIR: {
+    //         char *path = fh_decomp(argument.nfsproc3_rmdir_3_arg.object.dir);
+    //         raft_log("RMDIR %s/%s", path ? path : "?",
+    //                  argument.nfsproc3_rmdir_3_arg.object.name);
+    //         RMDIR3res *res = (RMDIR3res *)result;
+    //         if (res && res->status == NFS3_OK && path) {
+    //             char full[NFS_MAXPATHLEN];
+    //             snprintf(full, sizeof(full), "%s/%s", path,
+    //                      argument.nfsproc3_rmdir_3_arg.object.name);
+    //             handle_log_record_remove(remote_host, full);
+    //         }
+    //         break;
+    //     }
+    //     case NFSPROC3_RENAME: {
+    //         char *from = fh_decomp(argument.nfsproc3_rename_3_arg.from.dir);
+    //         char *to = fh_decomp(argument.nfsproc3_rename_3_arg.to.dir);
+    //         raft_log("RENAME %s/%s -> %s/%s", from ? from : "?",
+    //                  argument.nfsproc3_rename_3_arg.from.name,
+    //                  to ? to : "?",
+    //                  argument.nfsproc3_rename_3_arg.to.name);
+    //         RENAME3res *res = (RENAME3res *)result;
+    //         if (res && res->status == NFS3_OK && from && to) {
+    //             char old[NFS_MAXPATHLEN];
+    //             char newp[NFS_MAXPATHLEN];
+    //             snprintf(old, sizeof(old), "%s/%s", from,
+    //                      argument.nfsproc3_rename_3_arg.from.name);
+    //             snprintf(newp, sizeof(newp), "%s/%s", to,
+    //                      argument.nfsproc3_rename_3_arg.to.name);
+    //             handle_log_record_rename(remote_host, old, newp);
+    //         }
+    //         break;
+    //     }
+    //     case NFSPROC3_LINK: {
+    //         char *path = fh_decomp(argument.nfsproc3_link_3_arg.link.dir);
+    //         char *src = fh_decomp(argument.nfsproc3_link_3_arg.file);
+    //         raft_log("LINK %s -> %s/%s", src ? src : "?",
+    //                  path ? path : "?",
+    //                  argument.nfsproc3_link_3_arg.link.name);
+    //         break;
+    //     }
+    //     default:
+    //         break;
+    // }
 
     // sleep(1); 
 
