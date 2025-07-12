@@ -18,6 +18,10 @@
 #include "raft_log.h"
 #include "raft.h"
 #include "daemon_raft.h"
+#include "nfs.h"
+#include "mount.h"
+#include "xdr.h"
+#include <rpc/rpc.h>
 
 char *opt_raft_log = "raft.log";
 int opt_raft_id = 1;
@@ -577,6 +581,142 @@ static int raft_log_pop_cb(raft_server_t* raft,
     return 0;
 }
 
+static void apply_nfs_operation(uint32_t proc, char* buf, size_t len)
+{
+    union {
+        GETATTR3args getattr;
+        SETATTR3args setattr;
+        LOOKUP3args lookup;
+        ACCESS3args access;
+        READLINK3args readlink;
+        READ3args read;
+        WRITE3args write;
+        CREATE3args create;
+        MKDIR3args mkdir;
+        SYMLINK3args symlink;
+        MKNOD3args mknod;
+        REMOVE3args remove;
+        RMDIR3args rmdir;
+        RENAME3args rename;
+        LINK3args link;
+        READDIR3args readdir;
+        READDIRPLUS3args readdirplus;
+        FSSTAT3args fsstat;
+        FSINFO3args fsinfo;
+        PATHCONF3args pathconf;
+        COMMIT3args commit;
+    } argument;
+    xdrproc_t xdr_argument;
+    char *(*local)(char *, struct svc_req *);
+
+    switch (proc) {
+        case NFSPROC3_NULL:
+            xdr_argument = (xdrproc_t) xdr_void;
+            local = (char *(*)(char *, struct svc_req *)) nfsproc3_null_3_svc;
+            break;
+        case NFSPROC3_GETATTR:
+            xdr_argument = (xdrproc_t) xdr_GETATTR3args;
+            local = (char *(*)(char *, struct svc_req *)) nfsproc3_getattr_3_svc;
+            break;
+        case NFSPROC3_SETATTR:
+            xdr_argument = (xdrproc_t) xdr_SETATTR3args;
+            local = (char *(*)(char *, struct svc_req *)) nfsproc3_setattr_3_svc;
+            break;
+        case NFSPROC3_LOOKUP:
+            xdr_argument = (xdrproc_t) xdr_LOOKUP3args;
+            local = (char *(*)(char *, struct svc_req *)) nfsproc3_lookup_3_svc;
+            break;
+        case NFSPROC3_ACCESS:
+            xdr_argument = (xdrproc_t) xdr_ACCESS3args;
+            local = (char *(*)(char *, struct svc_req *)) nfsproc3_access_3_svc;
+            break;
+        case NFSPROC3_READLINK:
+            xdr_argument = (xdrproc_t) xdr_READLINK3args;
+            local = (char *(*)(char *, struct svc_req *)) nfsproc3_readlink_3_svc;
+            break;
+        case NFSPROC3_READ:
+            xdr_argument = (xdrproc_t) xdr_READ3args;
+            local = (char *(*)(char *, struct svc_req *)) nfsproc3_read_3_svc;
+            break;
+        case NFSPROC3_WRITE:
+            xdr_argument = (xdrproc_t) xdr_WRITE3args;
+            local = (char *(*)(char *, struct svc_req *)) nfsproc3_write_3_svc;
+            break;
+        case NFSPROC3_CREATE:
+            xdr_argument = (xdrproc_t) xdr_CREATE3args;
+            local = (char *(*)(char *, struct svc_req *)) nfsproc3_create_3_svc;
+            break;
+        case NFSPROC3_MKDIR:
+            xdr_argument = (xdrproc_t) xdr_MKDIR3args;
+            local = (char *(*)(char *, struct svc_req *)) nfsproc3_mkdir_3_svc;
+            break;
+        case NFSPROC3_SYMLINK:
+            xdr_argument = (xdrproc_t) xdr_SYMLINK3args;
+            local = (char *(*)(char *, struct svc_req *)) nfsproc3_symlink_3_svc;
+            break;
+        case NFSPROC3_MKNOD:
+            xdr_argument = (xdrproc_t) xdr_MKNOD3args;
+            local = (char *(*)(char *, struct svc_req *)) nfsproc3_mknod_3_svc;
+            break;
+        case NFSPROC3_REMOVE:
+            xdr_argument = (xdrproc_t) xdr_REMOVE3args;
+            local = (char *(*)(char *, struct svc_req *)) nfsproc3_remove_3_svc;
+            break;
+        case NFSPROC3_RMDIR:
+            xdr_argument = (xdrproc_t) xdr_RMDIR3args;
+            local = (char *(*)(char *, struct svc_req *)) nfsproc3_rmdir_3_svc;
+            break;
+        case NFSPROC3_RENAME:
+            xdr_argument = (xdrproc_t) xdr_RENAME3args;
+            local = (char *(*)(char *, struct svc_req *)) nfsproc3_rename_3_svc;
+            break;
+        case NFSPROC3_LINK:
+            xdr_argument = (xdrproc_t) xdr_LINK3args;
+            local = (char *(*)(char *, struct svc_req *)) nfsproc3_link_3_svc;
+            break;
+        case NFSPROC3_READDIR:
+            xdr_argument = (xdrproc_t) xdr_READDIR3args;
+            local = (char *(*)(char *, struct svc_req *)) nfsproc3_readdir_3_svc;
+            break;
+        case NFSPROC3_READDIRPLUS:
+            xdr_argument = (xdrproc_t) xdr_READDIRPLUS3args;
+            local = (char *(*)(char *, struct svc_req *)) nfsproc3_readdirplus_3_svc;
+            break;
+        case NFSPROC3_FSSTAT:
+            xdr_argument = (xdrproc_t) xdr_FSSTAT3args;
+            local = (char *(*)(char *, struct svc_req *)) nfsproc3_fsstat_3_svc;
+            break;
+        case NFSPROC3_FSINFO:
+            xdr_argument = (xdrproc_t) xdr_FSINFO3args;
+            local = (char *(*)(char *, struct svc_req *)) nfsproc3_fsinfo_3_svc;
+            break;
+        case NFSPROC3_PATHCONF:
+            xdr_argument = (xdrproc_t) xdr_PATHCONF3args;
+            local = (char *(*)(char *, struct svc_req *)) nfsproc3_pathconf_3_svc;
+            break;
+        case NFSPROC3_COMMIT:
+            xdr_argument = (xdrproc_t) xdr_COMMIT3args;
+            local = (char *(*)(char *, struct svc_req *)) nfsproc3_commit_3_svc;
+            break;
+        default:
+            return;
+    }
+
+    memset(&argument, 0, sizeof(argument));
+    XDR xdrs;
+    xdrmem_create(&xdrs, buf, len, XDR_DECODE);
+    if (!xdr_argument(&xdrs, (caddr_t)&argument)) {
+        xdr_destroy(&xdrs);
+        logmsg(LOG_ERR, "raft: failed to decode args for proc %u", proc);
+        return;
+    }
+    xdr_destroy(&xdrs);
+
+    struct svc_req dummy;
+    memset(&dummy, 0, sizeof(dummy));
+    (void)local((char *)&argument, &dummy);
+}
+
 static int raft_applylog_cb(raft_server_t* raft,
                             void* udata,
                             raft_entry_t* entry,
@@ -584,14 +724,22 @@ static int raft_applylog_cb(raft_server_t* raft,
     logmsg(LOG_DEBUG, "raft: apply log callback called, idx %lu, term %llu",
            (unsigned long)entry_idx, (unsigned long long)entry->term);
 
-    if (entry->data.len >= sizeof(uint32_t)) {
-        uint32_t proc;
-        memcpy(&proc, entry->data.buf, sizeof(proc));
-        proc = ntohl(proc);
+    if (raft_is_leader(raft_srv))
+        return 0;
 
-        logmsg(LOG_DEBUG, "raft: applying log idx %lu proc %u, data len %u",
-              (unsigned long)entry_idx, proc, entry->data.len - sizeof(proc));
-    }
+    if (entry->type != RAFT_LOGTYPE_NORMAL || entry->data.len < sizeof(uint32_t))
+        return 0;
+
+    uint32_t proc;
+    memcpy(&proc, entry->data.buf, sizeof(proc));
+    proc = ntohl(proc);
+
+    logmsg(LOG_DEBUG, "raft: applying log idx %lu proc %u, data len %u",
+           (unsigned long)entry_idx, proc, entry->data.len - sizeof(proc));
+
+    apply_nfs_operation(proc,
+                        (char*)entry->data.buf + sizeof(proc),
+                        entry->data.len - sizeof(proc));
     return 0;
 }
 
