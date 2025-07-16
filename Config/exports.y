@@ -848,8 +848,9 @@ int exports_options(const char *path, struct svc_req *rqstp,
         if (!path || strstr(path, "/../"))
                 return exports_opts;
 
-        if (get_remote(rqstp, &remote))
-                return exports_opts;
+        if (get_remote(rqstp, &remote)) 
+                {}
+                // return exports_opts;
 
         /* protect against SIGHUP reloading the list */
         exports_access = TRUE;

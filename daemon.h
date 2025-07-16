@@ -24,6 +24,9 @@
 void daemon_exit(int);
 void logmsg(int, const char *, ...);
 
+const char *nfs3_proc_name(u_long proc);
+void print_buffer_hex(const void *buf, size_t len, const char *label);
+
 /* remote address */
 int get_remote(struct svc_req *, struct in6_addr *);
 short get_port(struct svc_req *);

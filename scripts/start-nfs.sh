@@ -40,6 +40,8 @@ make
 sudo make install
 cd "$WORKDIR"
 
+USE_GDB=1
+
 ################################################################################
 # Helper: build a comma-separated list of all IDs except $1
 ################################################################################
@@ -118,11 +120,25 @@ for i in $(seq 0 "$NUM"); do
 
         echo "[*] inst$i: launching UNFS3 on ports nfs=$nfs_port  mount=$mnt_port"
         echo "            raft: id=$node_id  peers=$peers"
-        unfsd -d \
-            -e "$exports" -i "$pidfile" -n "$nfs_port" -m "$mnt_port" \
-            -H "$handle" -R "$raft" \
-            -I "$node_id" -P "$peers" \
-            > "$instdir/unfsd.out" 2>&1 &
+        
+        if [[ $USE_GDB -eq 1 ]]; then
+            echo "[*] inst$i: running under gdb and run"
+            gdb -ex run -ex "bt" --args unfsd -d \
+                -e "$exports" -i "$pidfile" -n "$nfs_port" -m "$mnt_port" \
+                -H "$handle" -R "$raft" \
+                -I "$node_id" -P "$peers" \
+                > "$instdir/unfsd.out" 2>&1 &
+
+        else
+            unfsd -d \
+                -e "$exports" -i "$pidfile" -n "$nfs_port" -m "$mnt_port" \
+                -H "$handle" -R "$raft" \
+                -I "$node_id" -P "$peers" \
+                > "$instdir/unfsd.out" 2>&1 &
+        fi
+        
+
+
 
         echo $! >> "$GLOBAL_PIDLIST"
         this_pid=$!

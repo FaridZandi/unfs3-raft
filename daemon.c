@@ -98,10 +98,47 @@ static SVCXPRT *mount_udptransp = NULL;
 static SVCXPRT *mount_tcptransp = NULL;
 static int was_leader = 0;
 
+#define mytimout 1000 /* 1 second timeout for svc_getreqset() */
+
+
 #define LEADER_EXPORTS_PATH "/home/faridzandi/git/unfs3-raft/scripts/global/exports"
 
 /* Register with portmapper? */
 int opt_portmapper = TRUE;
+
+// Prints the contents of 'buf' as hex, 'len' bytes, with 'bytes_per_line' bytes per line.
+void print_buffer_hex(const void *buf, size_t len, const char *label)
+{
+    const int bytes_per_line = 16; // Change this to adjust how many bytes per line 
+
+    const unsigned char *p = (const unsigned char *)buf;
+    if (label)
+        fprintf(stderr, "%s (len=%zu):\n", label, len);
+
+    for (size_t i = 0; i < len; ++i) {
+        fprintf(stderr, "%02x ", p[i]);
+        if ((i + 1) % bytes_per_line == 0) {
+            // Optionally print ASCII representation
+            fprintf(stderr, " | ");
+            for (size_t j = i + 1 - bytes_per_line; j <= i; ++j)
+                fprintf(stderr, "%c", isprint(p[j]) ? p[j] : '.');
+            fprintf(stderr, "\n");
+        }
+    }
+
+    // Handle last line if it's not a full line
+    if (len % bytes_per_line) {
+        int pad = (bytes_per_line - (len % bytes_per_line)) * 3;
+        for (int i = 0; i < pad; ++i)
+            fprintf(stderr, " ");
+        fprintf(stderr, " | ");
+        for (size_t j = len - (len % bytes_per_line); j < len; ++j)
+            fprintf(stderr, "%c", isprint(p[j]) ? p[j] : '.');
+        fprintf(stderr, "\n");
+    }
+
+    fflush(stderr); 
+}
 
 /* Wait for leader election before starting NFS services */
 static void wait_for_leader(void)
@@ -160,7 +197,7 @@ static void fh_to_hex(const nfs_fh3 *fh, char *out)
     out[i * 2] = '\0';
 }
 
-static const char *nfs3_proc_name(u_long proc)
+const char *nfs3_proc_name(u_long proc)
 {
     switch (proc) {
         case NFSPROC3_NULL: return "NULL";
@@ -903,33 +940,37 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
             char *buf = malloc(arg_len + sizeof(uint32_t));
             if (buf) {
                 uint32_t proc = htonl(rqstp->rq_proc);
+                logmsg(LOG_INFO, "NFS operation %s:%d will be replicated", nfs3_proc_name(rqstp->rq_proc), rqstp->rq_proc);
                 memcpy(buf, &proc, sizeof(proc));
-
                 XDR xdrs;
                 xdrmem_create(&xdrs, buf + sizeof(proc), arg_len, XDR_ENCODE);
+
                 if (((xdrproc_t)_xdr_argument)(&xdrs, (char *)&argument)) {
                     msg_entry_t ety = {0};
+
+                    // print_buffer_hex(buf, arg_len + sizeof(proc), "NFS operation buffer");
+                    
                     ety.data.buf = buf;
                     ety.data.len = arg_len + sizeof(proc);
                     ety.id = raft_get_current_idx(raft_srv) + 1;
                     ety.type = RAFT_LOGTYPE_NORMAL;
-
+                    
+                    // print the buffer 
+                    
                     msg_entry_response_t resp;
                     if (0 == raft_recv_entry(raft_srv, &ety, &resp)) {
                         while (raft_get_commit_idx(raft_srv) < resp.idx) {
-                            raft_periodic(raft_srv, 100);
+                            sleep(mytimout / 1000); 
+                            raft_periodic(raft_srv, mytimout);
                             raft_net_receive();
                         }
-                        raft_apply_all(raft_srv);
+                        // raft_apply_all(raft_srv);
                     }
                 }
                 xdr_destroy(&xdrs);
                 free(buf);
             }
         }
-    } else {
-        logmsg(LOG_INFO, "Not a leader, shouldn't receive NFS requests");
-        exit(1); 
     }
 
     result = (*local)((char *)&argument, rqstp);
@@ -1583,7 +1624,6 @@ static void become_leader(void)
     exports_parse();
 }
 
-#define mytimout 1000 /* 1 second timeout for svc_getreqset() */
 
 /* Run RPC service. This is our own implementation of svc_run(), which
    allows us to handle other events as well. */
