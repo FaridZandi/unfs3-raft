@@ -614,15 +614,23 @@ static void fh_to_hex(const nfs_fh3 *fh, char *out)
     const unsigned char *d = (const unsigned char *)fh->data.data_val;
     size_t i;
     for (i = 0; i < len && i < FH_MAXBUF; i++)
+    {
+        // logmsg(LOG_DEBUG, "fh_to_hex: byte %zu = %02x", i, d[i]);
         sprintf(out + i * 2, "%02x", d[i]);
+    }
+    // logmsg(LOG_DEBUG, "fh_to_hex: total length = %zu", len);
     out[i * 2] = '\0';
+    // logmsg(LOG_DEBUG, "fh_to_hex: hex string = %s", out);   
 }
 
 const char *fh_to_hexstr(const nfs_fh3 *fh)
 {
     // Each byte = 2 hex digits, plus null terminator
-    static char hexbuf[FH_MAXBUF * 2 + 1];
+    // char hexbuf[FH_MAXBUF * 2 + 1];
+    char *hexbuf = malloc(FH_MAXBUF * 2 + 1);
     fh_to_hex(fh, hexbuf);
+    // logmsg(LOG_DEBUG, "fh_to_hexstr: hex string = %s", hexbuf);
+    
     return hexbuf;
 }
 
@@ -641,6 +649,10 @@ MKDIR3res *nfsproc3_mkdir_3_svc(MKDIR3args *argp, struct svc_req *rqstp)
 
     PREP(path, argp->where.dir);
 
+    logmsg(LOG_INFO, "Creating full path for new directory: %s/%s",
+           path, argp->where.name); 
+    fflush(stdout); 
+    
     pre = get_pre_cached();
 
     logmsg(LOG_INFO, "Creating full path for new directory...");

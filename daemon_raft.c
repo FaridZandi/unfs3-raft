@@ -280,6 +280,8 @@ size_t deserialize_msg_entry(const uint8_t* buf, msg_entry_t* entry) {
     entry->data.len = (unsigned int)ntohl(net_len);
     offset += sizeof(net_len);
 
+    // print_buffer_hex(buf + offset, entry->data.len, "Deserializing entry data");
+
     if (entry->data.len > 0) {
         entry->data.buf = malloc(entry->data.len);
         if (!entry->data.buf) {
@@ -306,6 +308,8 @@ size_t serialize_msg_entry_array(const msg_entry_t* entries, int n, uint8_t* buf
 size_t deserialize_msg_entry_array(const uint8_t* buf, int n, msg_entry_t* entries) {
     size_t offset = 0;
     for (int i = 0; i < n; ++i) {
+        // logmsg(LOG_DEBUG, "Deserializing entry %d", i);
+
         offset += deserialize_msg_entry(buf + offset, &entries[i]);
     }
     return offset;
@@ -352,6 +356,8 @@ static int raft_send_appendentries_cb(raft_server_t* raft,
     if (msg->n_entries > 0 && msg->entries) {
         len += serialize_msg_entry_array(msg->entries, msg->n_entries, buf + len);
     }
+
+    // print_buffer_hex(buf, len, "raft: send appendentries");
 
     ssize_t sent = sendto(raft_sock, buf, len, 0, (struct sockaddr*)&peer->addr, sizeof(peer->addr));
     if (sent != len) {
@@ -471,11 +477,15 @@ static void handle_appendentries(const struct raft_peer* peer, char* ptr, struct
     msg_appendentries_t ae;
     size_t offset = 0;
 
+    // print_buffer_hex(ptr, 200, "raft: received appendentries");
+
     offset += deserialize_appendentries(ptr, &ae);
+
+    // print_buffer_hex(ptr + offset, 200, "raft: appendentries after header");
 
     msg_entry_t *entries = NULL;
     if (ae.n_entries > 0) {
-        logmsg(LOG_DEBUG, "raft: going to deserialize %d entries, 29038409238409", ae.n_entries);
+        // logmsg(LOG_DEBUG, "raft: going to deserialize %d entries, 29038409238409", ae.n_entries);
 
         entries = calloc(ae.n_entries, sizeof(msg_entry_t));
         if (!entries) {
@@ -495,10 +505,10 @@ static void handle_appendentries(const struct raft_peer* peer, char* ptr, struct
     logmsg(LOG_DEBUG, "raft: appendentries response: term %ld, success %d, current_idx %ld, first_idx %ld", 
                           resp.term, resp.success, resp.current_idx, resp.first_idx);
 
-    for (int i = 0; i < ae.n_entries; ++i) {
-        if (entries[i].data.buf) free(entries[i].data.buf);
-    }
-    free(entries);
+    // for (int i = 0; i < ae.n_entries; ++i) {
+    //     if (entries[i].data.buf) free(entries[i].data.buf);
+    // }
+    // free(entries);
 
     uint8_t resp_buf[64];
     size_t resp_len = 0;
@@ -581,6 +591,35 @@ static int raft_log_pop_cb(raft_server_t* raft,
     return 0;
 }
 
+
+#define FH_MAXBUF2 64
+
+static void fh_to_hex2(const nfs_fh3 *fh, char *out)
+{
+    size_t len = fh->data.data_len;
+    const unsigned char *d = (const unsigned char *)fh->data.data_val;
+    size_t i;
+    for (i = 0; i < len && i < FH_MAXBUF2; i++)
+    {
+        // logmsg(LOG_DEBUG, "fh_to_hex: byte %zu = %02x", i, d[i]);
+        sprintf(out + i * 2, "%02x", d[i]);
+    }
+    // logmsg(LOG_DEBUG, "fh_to_hex: total length = %zu", len);
+    out[i * 2] = '\0';
+    // logmsg(LOG_DEBUG, "fh_to_hex: hex string = %s", out);   
+}
+
+const char *fh_to_hexstr2(const nfs_fh3 *fh)
+{
+    // Each byte = 2 hex digits, plus null terminator
+    // char hexbuf[FH_MAXBUF * 2 + 1];
+    char *hexbuf = malloc(FH_MAXBUF2 * 2 + 1);
+    fh_to_hex2(fh, hexbuf);
+    // logmsg(LOG_DEBUG, "fh_to_hexstr: hex string = %s", hexbuf);
+    
+    return hexbuf;
+}
+
 static void apply_nfs_operation(uint32_t proc, char* buf, size_t len)
 {
     union {
@@ -609,92 +648,118 @@ static void apply_nfs_operation(uint32_t proc, char* buf, size_t len)
     xdrproc_t xdr_argument;
     char *(*local)(char *, struct svc_req *);
 
+
+
+    logmsg(LOG_DEBUG, "apply_nfs_operation: proc %u, buf %p, len %zu", proc, buf, len); 
+    
     switch (proc) {
         case NFSPROC3_NULL:
+            printf("apply_nfs_operation: NFSPROC3_NULL\n");
             xdr_argument = (xdrproc_t) xdr_void;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_null_3_svc;
             break;
         case NFSPROC3_GETATTR:
+            printf("apply_nfs_operation: NFSPROC3_GETATTR\n");
             xdr_argument = (xdrproc_t) xdr_GETATTR3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_getattr_3_svc;
             break;
         case NFSPROC3_SETATTR:
+            printf("apply_nfs_operation: NFSPROC3_SETATTR\n");
             xdr_argument = (xdrproc_t) xdr_SETATTR3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_setattr_3_svc;
             break;
         case NFSPROC3_LOOKUP:
+            printf("apply_nfs_operation: NFSPROC3_LOOKUP\n");
             xdr_argument = (xdrproc_t) xdr_LOOKUP3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_lookup_3_svc;
             break;
         case NFSPROC3_ACCESS:
+            printf("apply_nfs_operation: NFSPROC3_ACCESS\n");
             xdr_argument = (xdrproc_t) xdr_ACCESS3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_access_3_svc;
             break;
         case NFSPROC3_READLINK:
+            printf("apply_nfs_operation: NFSPROC3_READLINK\n");
             xdr_argument = (xdrproc_t) xdr_READLINK3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_readlink_3_svc;
             break;
         case NFSPROC3_READ:
+            printf("apply_nfs_operation: NFSPROC3_READ\n");
             xdr_argument = (xdrproc_t) xdr_READ3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_read_3_svc;
             break;
         case NFSPROC3_WRITE:
+            printf("apply_nfs_operation: NFSPROC3_WRITE\n");
             xdr_argument = (xdrproc_t) xdr_WRITE3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_write_3_svc;
             break;
         case NFSPROC3_CREATE:
+            printf("apply_nfs_operation: NFSPROC3_CREATE\n");
             xdr_argument = (xdrproc_t) xdr_CREATE3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_create_3_svc;
             break;
         case NFSPROC3_MKDIR:
+            printf("apply_nfs_operation: NFSPROC3_MKDIR\n");
             xdr_argument = (xdrproc_t) xdr_MKDIR3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_mkdir_3_svc;
             break;
         case NFSPROC3_SYMLINK:
+            printf("apply_nfs_operation: NFSPROC3_SYMLINK\n");
             xdr_argument = (xdrproc_t) xdr_SYMLINK3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_symlink_3_svc;
             break;
         case NFSPROC3_MKNOD:
+            printf("apply_nfs_operation: NFSPROC3_MKNOD\n");
             xdr_argument = (xdrproc_t) xdr_MKNOD3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_mknod_3_svc;
             break;
         case NFSPROC3_REMOVE:
+            printf("apply_nfs_operation: NFSPROC3_REMOVE\n");
             xdr_argument = (xdrproc_t) xdr_REMOVE3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_remove_3_svc;
             break;
         case NFSPROC3_RMDIR:
+            printf("apply_nfs_operation: NFSPROC3_RMDIR\n");
             xdr_argument = (xdrproc_t) xdr_RMDIR3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_rmdir_3_svc;
             break;
         case NFSPROC3_RENAME:
+            printf("apply_nfs_operation: NFSPROC3_RENAME\n");
             xdr_argument = (xdrproc_t) xdr_RENAME3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_rename_3_svc;
             break;
         case NFSPROC3_LINK:
+            printf("apply_nfs_operation: NFSPROC3_LINK\n");
             xdr_argument = (xdrproc_t) xdr_LINK3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_link_3_svc;
             break;
         case NFSPROC3_READDIR:
+            printf("apply_nfs_operation: NFSPROC3_READDIR\n");
             xdr_argument = (xdrproc_t) xdr_READDIR3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_readdir_3_svc;
             break;
         case NFSPROC3_READDIRPLUS:
+            printf("apply_nfs_operation: NFSPROC3_READDIRPLUS\n");
             xdr_argument = (xdrproc_t) xdr_READDIRPLUS3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_readdirplus_3_svc;
             break;
         case NFSPROC3_FSSTAT:
+            printf("apply_nfs_operation: NFSPROC3_FSSTAT\n");
             xdr_argument = (xdrproc_t) xdr_FSSTAT3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_fsstat_3_svc;
             break;
         case NFSPROC3_FSINFO:
+            printf("apply_nfs_operation: NFSPROC3_FSINFO\n");
             xdr_argument = (xdrproc_t) xdr_FSINFO3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_fsinfo_3_svc;
             break;
         case NFSPROC3_PATHCONF:
+            printf("apply_nfs_operation: NFSPROC3_PATHCONF\n");
             xdr_argument = (xdrproc_t) xdr_PATHCONF3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_pathconf_3_svc;
             break;
         case NFSPROC3_COMMIT:
+            printf("apply_nfs_operation: NFSPROC3_COMMIT\n");
             xdr_argument = (xdrproc_t) xdr_COMMIT3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_commit_3_svc;
             break;
@@ -711,6 +776,31 @@ static void apply_nfs_operation(uint32_t proc, char* buf, size_t len)
         return;
     }
     xdr_destroy(&xdrs);
+
+    if (proc == NFSPROC3_MKDIR) {
+        // inst1: f70baac30100000000000000000000000000000000
+        // inst2: 1f87b0c90100000000000000000000000000000000
+        // inst3: 8c85b0c80100000000000000000000000000000000
+        // inst4: f983b0c70100000000000000000000000000000000
+        // inst5: 6682b0c60100000000000000000000000000000000
+        // based on the id of this peer, we need to change the handle 
+
+        int my_id = opt_raft_id;
+        
+        logmsg(LOG_DEBUG, "apply_nfs_operation: my_id = %d", my_id);
+
+        char *hexstr = fh_to_hexstr2(&argument.mkdir.where.dir); 
+
+        logmsg(LOG_DEBUG, "apply_nfs_operation: MKDIR called: dir handle=%s, name=%s", 
+               hexstr, argument.mkdir.where.name);
+        
+        if (my_id == 2) {
+            // replace the data with inst2 handle :
+            argument.mkdir.where.dir.data.data_val = (char *)"\x1f\x87\xb0\xc9\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+        }
+
+        fflush(stdout);
+    }
 
     struct svc_req dummy;
     memset(&dummy, 0, sizeof(dummy));
@@ -735,7 +825,7 @@ static int raft_applylog_cb(raft_server_t* raft,
     proc = ntohl(proc);
 
     logmsg(LOG_DEBUG, "raft: applying log idx %lu proc %u, data len %u",
-           (unsigned long)entry_idx, proc, entry->data.len - sizeof(proc));
+           (unsigned long)entry_idx, nfs3_proc_name(proc), entry->data.len - sizeof(proc));
 
     apply_nfs_operation(proc,
                         (char*)entry->data.buf + sizeof(proc),
