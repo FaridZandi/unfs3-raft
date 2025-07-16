@@ -777,30 +777,30 @@ static void apply_nfs_operation(uint32_t proc, char* buf, size_t len)
     }
     xdr_destroy(&xdrs);
 
-    if (proc == NFSPROC3_MKDIR) {
-        // inst1: f70baac30100000000000000000000000000000000
-        // inst2: 1f87b0c90100000000000000000000000000000000
-        // inst3: 8c85b0c80100000000000000000000000000000000
-        // inst4: f983b0c70100000000000000000000000000000000
-        // inst5: 6682b0c60100000000000000000000000000000000
-        // based on the id of this peer, we need to change the handle 
+    // if (proc == NFSPROC3_MKDIR) {
+    //     // inst1: f70baac30100000000000000000000000000000000
+    //     // inst2: 1f87b0c90100000000000000000000000000000000
+    //     // inst3: 8c85b0c80100000000000000000000000000000000
+    //     // inst4: f983b0c70100000000000000000000000000000000
+    //     // inst5: 6682b0c60100000000000000000000000000000000
+    //     // based on the id of this peer, we need to change the handle 
 
-        int my_id = opt_raft_id;
+    //     int my_id = opt_raft_id;
         
-        logmsg(LOG_DEBUG, "apply_nfs_operation: my_id = %d", my_id);
+    //     logmsg(LOG_DEBUG, "apply_nfs_operation: my_id = %d", my_id);
 
-        char *hexstr = fh_to_hexstr2(&argument.mkdir.where.dir); 
+    //     char *hexstr = fh_to_hexstr2(&argument.mkdir.where.dir); 
 
-        logmsg(LOG_DEBUG, "apply_nfs_operation: MKDIR called: dir handle=%s, name=%s", 
-               hexstr, argument.mkdir.where.name);
+    //     logmsg(LOG_DEBUG, "apply_nfs_operation: MKDIR called: dir handle=%s, name=%s", 
+    //            hexstr, argument.mkdir.where.name);
         
-        if (my_id == 2) {
-            // replace the data with inst2 handle :
-            argument.mkdir.where.dir.data.data_val = (char *)"\x1f\x87\xb0\xc9\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
-        }
+    //     if (my_id == 2) {
+    //         // replace the data with inst2 handle :
+    //         argument.mkdir.where.dir.data.data_val = (char *)"\x1f\x87\xb0\xc9\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+    //     }
 
-        fflush(stdout);
-    }
+    //     fflush(stdout);
+    // }
 
     struct svc_req dummy;
     memset(&dummy, 0, sizeof(dummy));
