@@ -129,6 +129,7 @@ for i in $(seq 0 "$NUM"); do
         
         cmd_args=(
             -d
+            -p 
             -e "$exports"
             -i "$pidfile"
             -n "$nfs_port"
