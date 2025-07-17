@@ -22,6 +22,7 @@
 #include "mount.h"
 #include "xdr.h"
 #include <rpc/rpc.h>
+#include <rpc/auth_unix.h>
 
 char *opt_raft_log = "raft.log";
 int opt_raft_id = 1;
@@ -618,7 +619,7 @@ const char *fh_to_hexstr2(const nfs_fh3 *fh)
     // logmsg(LOG_DEBUG, "fh_to_hexstr: hex string = %s", hexbuf);    return hexbuf;
 }
 
-static void apply_nfs_operation(uint32_t proc, char* buf, size_t len)
+static void apply_nfs_operation(uint32_t proc, raft_client_info_t *info, char* buf, size_t len)
 {
     union {
         GETATTR3args getattr;
@@ -800,14 +801,34 @@ static void apply_nfs_operation(uint32_t proc, char* buf, size_t len)
     //     fflush(stdout);
     // }
 
-    // we still can't really do this. So let's skip it for now.
+    struct authunix_parms cred = {0};
+    gid_t gids[NGRPS] = {0};
+    unsigned int i;
 
-    logmsg(LOG_DEBUG, "PRETEND: apply_nfs_operation: proc %s", nfs3_proc_name(proc));
+    cred.aup_machname = "raft";
+    cred.aup_time = 0;
+    cred.aup_uid = info->uid;
+    cred.aup_gid = info->gid;
+    cred.aup_len = info->gid_len;
+    cred.aup_gids = gids;
+    for (i = 0; i < cred.aup_len && i < NGRPS; i++)
+        gids[i] = info->gids[i];
 
-    return; 
+    SVCXPRT xprt;
+    memset(&xprt, 0, sizeof(xprt));
+    memcpy(&xprt.xp_rtaddr, &info->addr, sizeof(info->addr));
+    xprt.xp_fd = -1;
+    xprt.xp_port = 0;
+    xprt.xp_addrlen = sizeof(info->addr);
 
     struct svc_req dummy;
     memset(&dummy, 0, sizeof(dummy));
+    dummy.rq_clntcred = &cred;
+    dummy.rq_cred.oa_flavor = AUTH_UNIX;
+    dummy.rq_xprt = &xprt;
+
+    logmsg(LOG_DEBUG, "apply_nfs_operation: executing proc %s", nfs3_proc_name(proc));
+
     (void)local((char *)&argument, &dummy);
 }
 
@@ -821,19 +842,29 @@ static int raft_applylog_cb(raft_server_t* raft,
     if (raft_is_leader(raft_srv))
         return 0;
 
-    if (entry->type != RAFT_LOGTYPE_NORMAL || entry->data.len < sizeof(uint32_t))
+    if (entry->type != RAFT_LOGTYPE_NORMAL || entry->data.len < sizeof(uint32_t) + sizeof(raft_client_info_t))
         return 0;
 
     uint32_t proc;
     memcpy(&proc, entry->data.buf, sizeof(proc));
     proc = ntohl(proc);
 
-    logmsg(LOG_DEBUG, "raft: applying log idx %lu proc %u, data len %u",
-           (unsigned long)entry_idx, nfs3_proc_name(proc), entry->data.len - sizeof(proc));
-    
+    raft_client_info_t info;
+    memcpy(&info, (char*)entry->data.buf + sizeof(proc), sizeof(info));
+    info.uid = ntohl(info.uid);
+    info.gid = ntohl(info.gid);
+    info.gid_len = ntohl(info.gid_len);
+    for (unsigned int i = 0; i < info.gid_len && i < NGRPS; i++)
+        info.gids[i] = ntohl(info.gids[i]);
+
+    logmsg(LOG_DEBUG, "raft: applying log idx %lu proc %s, data len %u",
+           (unsigned long)entry_idx, nfs3_proc_name(proc),
+           entry->data.len - sizeof(proc) - sizeof(info));
+
     apply_nfs_operation(proc,
-                        (char*)entry->data.buf + sizeof(proc),
-                        entry->data.len - sizeof(proc));
+                        &info,
+                        (char*)entry->data.buf + sizeof(proc) + sizeof(info),
+                        entry->data.len - sizeof(proc) - sizeof(info));
     return 0;
 }
 

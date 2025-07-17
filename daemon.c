@@ -62,6 +62,7 @@
 #include <endian.h>      // htobe64, be64toh
 
 #include "daemon_raft.h"
+#include <rpc/auth_unix.h>
 #ifndef SIG_PF
 #define SIG_PF void(*)(int)
 #endif
@@ -937,34 +938,44 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
     if (raft_is_leader(raft_srv)) {
         u_int arg_len = xdr_sizeof(_xdr_argument, (char *)&argument);
         if (arg_len > 0) {
-            char *buf = malloc(arg_len + sizeof(uint32_t));
+            size_t hdr_size = sizeof(raft_client_info_t);
+            char *buf = malloc(arg_len + sizeof(uint32_t) + hdr_size);
             if (buf) {
                 uint32_t proc = htonl(rqstp->rq_proc);
                 logmsg(LOG_INFO, "NFS operation %s:%d will be replicated", nfs3_proc_name(rqstp->rq_proc), rqstp->rq_proc);
                 memcpy(buf, &proc, sizeof(proc));
+
+                raft_client_info_t info = {0};
+                info.addr = remote_addr;
+                if (rqstp->rq_cred.oa_flavor == AUTH_UNIX) {
+                    struct authunix_parms *auth = (struct authunix_parms *)rqstp->rq_clntcred;
+                    info.uid = htonl(auth->aup_uid);
+                    info.gid = htonl(auth->aup_gid);
+                    info.gid_len = htonl(auth->aup_len);
+                    for (u_int i = 0; i < auth->aup_len && i < NGRPS; i++)
+                        info.gids[i] = htonl(auth->aup_gids[i]);
+                }
+
+                memcpy(buf + sizeof(proc), &info, sizeof(info));
+
                 XDR xdrs;
-                xdrmem_create(&xdrs, buf + sizeof(proc), arg_len, XDR_ENCODE);
+                xdrmem_create(&xdrs, buf + sizeof(proc) + hdr_size, arg_len, XDR_ENCODE);
 
                 if (((xdrproc_t)_xdr_argument)(&xdrs, (char *)&argument)) {
                     msg_entry_t ety = {0};
 
-                    // print_buffer_hex(buf, arg_len + sizeof(proc), "NFS operation buffer");
-                    
                     ety.data.buf = buf;
-                    ety.data.len = arg_len + sizeof(proc);
+                    ety.data.len = arg_len + sizeof(proc) + hdr_size;
                     ety.id = raft_get_current_idx(raft_srv) + 1;
                     ety.type = RAFT_LOGTYPE_NORMAL;
-                    
-                    // print the buffer 
-                    
+
                     msg_entry_response_t resp;
                     if (0 == raft_recv_entry(raft_srv, &ety, &resp)) {
                         while (raft_get_commit_idx(raft_srv) < resp.idx) {
-                            sleep(mytimout / 1000); 
+                            sleep(mytimout / 1000);
                             raft_periodic(raft_srv, mytimout);
                             raft_net_receive();
                         }
-                        // raft_apply_all(raft_srv);
                     }
                 }
                 xdr_destroy(&xdrs);
