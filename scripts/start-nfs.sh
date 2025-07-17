@@ -42,10 +42,11 @@ cd "$WORKDIR"
 
 USE_GDB=1
 
-USER=faridzandi
-GROUP=dfrancis
-# CLIENT_IP=10.70.10.108 
+USER=`id -un`  # user who ran the script
+GROUP=`id -gn $USER`  # group of the user who ran the script
 CLIENT_IP=localhost
+
+echo "USER=$USER, GROUP=$GROUP, CLIENT_IP=$CLIENT_IP"
 
 ################################################################################
 # Helper: build a comma-separated list of all IDs except $1
@@ -88,7 +89,7 @@ for i in $(seq 0 "$NUM"); do
     mnt_port=$((BASE_MNT_PORT + i - 1))
 
     mkdir -p "$share"
-    chown $USER:$GROUP "$share"
+    sudo chown $USER:$GROUP "$share"
 
     # if mount image is not needed, skip the setup
     if [[ $MOUNT_IMAGE == False ]]; then
