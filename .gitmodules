@@ -1,3 +1,6 @@
 [submodule "raft"]
 	path = raft
 	url = https://github.com/willemt/raft
+[submodule "scripts/client"]
+	path = scripts/client
+	url = https://github.com/FaridZandi/NfsClient-raft
