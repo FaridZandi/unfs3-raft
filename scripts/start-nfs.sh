@@ -127,26 +127,30 @@ for i in $(seq 0 "$NUM"); do
         echo "[*] inst$i: launching UNFS3 on ports nfs=$nfs_port  mount=$mnt_port"
         echo "            raft: id=$node_id  peers=$peers"
         
+        cmd_args=(
+            -d
+            -e "$exports"
+            -i "$pidfile"
+            -n "$nfs_port"
+            -m "$mnt_port"
+            -H "$handle"
+            -R "$raft"
+            -I "$node_id"
+            -P "$peers"
+        )
+
         if [[ $USE_GDB -eq 1 ]]; then
             echo "[*] inst$i: running under gdb and run"
-            gdb -ex run -ex "bt" --args unfsd -p -d \
-                -e "$exports" -i "$pidfile" -n "$nfs_port" -m "$mnt_port" \
-                -H "$handle" -R "$raft" \
-                -I "$node_id" -P "$peers" \
-                > "$instdir/unfsd.out" 2>&1 &
-
+            gdb -ex run -ex "bt" --args unfsd "${cmd_args[@]}" > "$instdir/unfsd.out" 2>&1 &
         else
-            unfsd -d \
-                -e "$exports" -i "$pidfile" -n "$nfs_port" -m "$mnt_port" \
-                -H "$handle" -R "$raft" \
-                -I "$node_id" -P "$peers" \
-                > "$instdir/unfsd.out" 2>&1 &
+            unfsd "${cmd_args[@]}" > "$instdir/unfsd.out" 2>&1 &
         fi
-        
 
         echo $! >> "$GLOBAL_PIDLIST"
         this_pid=$!
-        echo "    inst$i OK  →  share=$share, pid=$this_pid, exports=$exports"  
+        echo "    inst$i OK  →  share=$share, 
+                  pid=$this_pid, 
+                  exports=$exports"  
     fi
 done
 
