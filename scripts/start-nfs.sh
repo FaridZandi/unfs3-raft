@@ -22,7 +22,7 @@ BASE_NFS_PORT=2050           # NFS   port for instance 1
 BASE_MNT_PORT=2050           # mount port for instance 1 (avoid <1024)
 
 WORKDIR=$(pwd)               # where the script is run
-MOUNT_BASE=/srv/nfs          # parent for visible shares
+MOUNT_BASE=~/srv/nfs          # parent for visible shares
 GLOBAL_PIDLIST=$WORKDIR/unfsd_all.pids
 : > "$GLOBAL_PIDLIST"        # truncate old list
 
@@ -41,6 +41,11 @@ sudo make install
 cd "$WORKDIR"
 
 USE_GDB=1
+
+USER=faridzandi
+GROUP=dfrancis
+# CLIENT_IP=10.70.10.108 
+CLIENT_IP=localhost
 
 ################################################################################
 # Helper: build a comma-separated list of all IDs except $1
@@ -83,7 +88,7 @@ for i in $(seq 0 "$NUM"); do
     mnt_port=$((BASE_MNT_PORT + i - 1))
 
     mkdir -p "$share"
-    chown faridzandi:dfrancis "$share"
+    chown $USER:$GROUP "$share"
 
     # if mount image is not needed, skip the setup
     if [[ $MOUNT_IMAGE == False ]]; then
@@ -98,14 +103,14 @@ for i in $(seq 0 "$NUM"); do
         mkfs.ext4 -q "$img"
 
         echo "[*] inst$i: mounting image to $share"
-        loopdev=$(losetup -f)
-        losetup "$loopdev" "$img"
-        mount -o loop,sync "$loopdev" "$share"
+        loopdev=$(sudo losetup -f)
+        sudo losetup "$loopdev" "$img"
+        sudo mount -o loop,sync "$loopdev" "$share"
 
-        chown -R faridzandi:dfrancis "$share"
+        sudo chown -R $USER:$GROUP "$share"
     fi
 
-    echo "$share 10.70.10.108(rw,sync,no_subtree_check,removable)" > "$exports"
+    echo "$share $CLIENT_IP(rw,sync,no_subtree_check,removable,insecure)" > "$exports"
 
     # -------------------------------------------------------------------------
     # RAFT parameters
@@ -123,7 +128,7 @@ for i in $(seq 0 "$NUM"); do
         
         if [[ $USE_GDB -eq 1 ]]; then
             echo "[*] inst$i: running under gdb and run"
-            gdb -ex run -ex "bt" --args unfsd -d \
+            gdb -ex run -ex "bt" --args unfsd -p -d \
                 -e "$exports" -i "$pidfile" -n "$nfs_port" -m "$mnt_port" \
                 -H "$handle" -R "$raft" \
                 -I "$node_id" -P "$peers" \
@@ -137,8 +142,6 @@ for i in $(seq 0 "$NUM"); do
                 > "$instdir/unfsd.out" 2>&1 &
         fi
         
-
-
 
         echo $! >> "$GLOBAL_PIDLIST"
         this_pid=$!

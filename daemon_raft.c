@@ -615,9 +615,7 @@ const char *fh_to_hexstr2(const nfs_fh3 *fh)
     // char hexbuf[FH_MAXBUF * 2 + 1];
     char *hexbuf = malloc(FH_MAXBUF2 * 2 + 1);
     fh_to_hex2(fh, hexbuf);
-    // logmsg(LOG_DEBUG, "fh_to_hexstr: hex string = %s", hexbuf);
-    
-    return hexbuf;
+    // logmsg(LOG_DEBUG, "fh_to_hexstr: hex string = %s", hexbuf);    return hexbuf;
 }
 
 static void apply_nfs_operation(uint32_t proc, char* buf, size_t len)
@@ -802,6 +800,12 @@ static void apply_nfs_operation(uint32_t proc, char* buf, size_t len)
     //     fflush(stdout);
     // }
 
+    // we still can't really do this. So let's skip it for now.
+
+    logmsg(LOG_DEBUG, "PRETEND: apply_nfs_operation: proc %s", nfs3_proc_name(proc));
+
+    return; 
+
     struct svc_req dummy;
     memset(&dummy, 0, sizeof(dummy));
     (void)local((char *)&argument, &dummy);
@@ -826,7 +830,7 @@ static int raft_applylog_cb(raft_server_t* raft,
 
     logmsg(LOG_DEBUG, "raft: applying log idx %lu proc %u, data len %u",
            (unsigned long)entry_idx, nfs3_proc_name(proc), entry->data.len - sizeof(proc));
-
+    
     apply_nfs_operation(proc,
                         (char*)entry->data.buf + sizeof(proc),
                         entry->data.len - sizeof(proc));

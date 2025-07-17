@@ -6,7 +6,9 @@
 set -euo pipefail
 
 WORKDIR=$(pwd)
-MOUNT_BASE=/srv/nfs
+user_home=$(eval echo "~$SUDO_USER")  # home of the user who ran the script
+MOUNT_BASE="$user_home/srv/nfs"        # parent for visible shares
+
 
 for pidfile in "$WORKDIR"/inst*/unfsd.pid; do
     [[ -e $pidfile ]] || continue
@@ -20,6 +22,8 @@ echo "-----------------------------"
 # clean mounts & loops
 for loop in $(losetup -a | awk -F: '{print $1}'); do
     mountpt=$(lsblk -no MOUNTPOINT "$loop")
+    echo "[*] checking loop device $loop mounted at $mountpt"
+
     if [[ $mountpt == $MOUNT_BASE/* ]]; then
         echo "[*] umount $mountpt && losetup -d $loop"
         if ! umount "$mountpt"; then
