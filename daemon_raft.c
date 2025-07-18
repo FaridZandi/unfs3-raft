@@ -20,6 +20,8 @@
 #include "daemon_raft.h"
 #include "nfs.h"
 #include "mount.h"
+#include "fh.h"
+#include "Config/exports.h"
 #include "xdr.h"
 #include <rpc/rpc.h>
 #include <rpc/auth_unix.h>
@@ -648,8 +650,74 @@ static int raft_log_pop_cb(raft_server_t* raft,
     return 0;
 }
 
-
 #define FH_MAXBUF2 64
+
+/* ----------------------------------------------------------------------
+ * Handle translation helpers
+ * ---------------------------------------------------------------------- */
+
+static nfs_fh3 local_root_fh;
+static uint32_t local_fsid;
+static int local_fh_ready = 0;
+
+/* Obtain the local root file handle and fsid from the exports list.  */
+static void init_local_handle(void)
+{
+    if (local_fh_ready)
+        return;
+
+    if (!exports_nfslist) {
+        logmsg(LOG_ERR, "init_local_handle: no exports available");
+        return;
+    }
+
+    const char *path = exports_nfslist->ex_dir;
+    if (!path) {
+        logmsg(LOG_ERR, "init_local_handle: export path missing");
+        return;
+    }
+
+    unfs3_fh_t fh = fh_comp_raw(path, NULL, FH_DIR);
+    if (!fh_valid(fh)) {
+        logmsg(LOG_ERR, "init_local_handle: failed to compose fh for %s", path);
+        return;
+    }
+
+    static char buf[FH_MAXBUF];
+    local_root_fh = fh_encode(&fh, buf);
+    local_fsid = fh.dev;
+    local_fh_ready = 1;
+}
+
+/* Replace the device (fsid) in a handle with the local fsid.  If the handle
+ * refers to the export root itself, replace it entirely with the local root
+ * handle. */
+static void adjust_handle(nfs_fh3 *fh)
+{
+    init_local_handle();
+    if (!local_fh_ready)
+        return;
+
+    unfs3_fh_t obj = fh_decode(fh);
+
+    if (obj.len == 0) {
+        /* Root handle */
+        free(fh->data.data_val);
+        fh->data.data_val = malloc(local_root_fh.data.data_len);
+        memcpy(fh->data.data_val, local_root_fh.data.data_val,
+               local_root_fh.data.data_len);
+        fh->data.data_len = local_root_fh.data.data_len;
+        return;
+    }
+
+    if (obj.dev != local_fsid) {
+        obj.dev = local_fsid;
+        char *buf = malloc(FH_MAXBUF);
+        nfs_fh3 newfh = fh_encode(&obj, buf);
+        free(fh->data.data_val);
+        fh->data = newfh.data;
+    }
+}
 
 static void fh_to_hex2(const nfs_fh3 *fh, char *out)
 {
@@ -674,6 +742,81 @@ const char *fh_to_hexstr2(const nfs_fh3 *fh)
     fh_to_hex2(fh, hexbuf);
     // logmsg(LOG_DEBUG, "fh_to_hexstr: hex string = %s", hexbuf);    
     return hexbuf;
+}
+
+/* Adjust all file handles contained in the RPC arguments so that they use
+ * the local device id and root handle. */
+static void adjust_handles_for_proc(u_long proc, void *argp)
+{
+    switch (proc) {
+        case NFSPROC3_GETATTR:
+            adjust_handle(&((GETATTR3args *)argp)->object);
+            break;
+        case NFSPROC3_SETATTR:
+            adjust_handle(&((SETATTR3args *)argp)->object);
+            break;
+        case NFSPROC3_LOOKUP:
+            adjust_handle(&((LOOKUP3args *)argp)->what.dir);
+            break;
+        case NFSPROC3_ACCESS:
+            adjust_handle(&((ACCESS3args *)argp)->object);
+            break;
+        case NFSPROC3_READLINK:
+            adjust_handle(&((READLINK3args *)argp)->symlink);
+            break;
+        case NFSPROC3_READ:
+            adjust_handle(&((READ3args *)argp)->file);
+            break;
+        case NFSPROC3_WRITE:
+            adjust_handle(&((WRITE3args *)argp)->file);
+            break;
+        case NFSPROC3_CREATE:
+            adjust_handle(&((CREATE3args *)argp)->where.dir);
+            break;
+        case NFSPROC3_MKDIR:
+            adjust_handle(&((MKDIR3args *)argp)->where.dir);
+            break;
+        case NFSPROC3_SYMLINK:
+            adjust_handle(&((SYMLINK3args *)argp)->where.dir);
+            break;
+        case NFSPROC3_MKNOD:
+            adjust_handle(&((MKNOD3args *)argp)->where.dir);
+            break;
+        case NFSPROC3_REMOVE:
+            adjust_handle(&((REMOVE3args *)argp)->object.dir);
+            break;
+        case NFSPROC3_RMDIR:
+            adjust_handle(&((RMDIR3args *)argp)->object.dir);
+            break;
+        case NFSPROC3_RENAME:
+            adjust_handle(&((RENAME3args *)argp)->from.dir);
+            adjust_handle(&((RENAME3args *)argp)->to.dir);
+            break;
+        case NFSPROC3_LINK:
+            adjust_handle(&((LINK3args *)argp)->file);
+            adjust_handle(&((LINK3args *)argp)->link.dir);
+            break;
+        case NFSPROC3_READDIR:
+            adjust_handle(&((READDIR3args *)argp)->dir);
+            break;
+        case NFSPROC3_READDIRPLUS:
+            adjust_handle(&((READDIRPLUS3args *)argp)->dir);
+            break;
+        case NFSPROC3_FSSTAT:
+            adjust_handle(&((FSSTAT3args *)argp)->fsroot);
+            break;
+        case NFSPROC3_FSINFO:
+            adjust_handle(&((FSINFO3args *)argp)->fsroot);
+            break;
+        case NFSPROC3_PATHCONF:
+            adjust_handle(&((PATHCONF3args *)argp)->object);
+            break;
+        case NFSPROC3_COMMIT:
+            adjust_handle(&((COMMIT3args *)argp)->file);
+            break;
+        default:
+            break;
+    }
 }
 
 static void apply_nfs_operation(uint32_t proc, raft_client_info_t *info, char* buf, size_t len)
@@ -835,28 +978,8 @@ static void apply_nfs_operation(uint32_t proc, raft_client_info_t *info, char* b
     }
     xdr_destroy(&xdrs);
 
-    if (proc == NFSPROC3_MKDIR) {
-        // based on the id of this peer, we need to change the handle 
-
-        int my_id = opt_raft_id;
-        
-        logmsg(LOG_DEBUG, "apply_nfs_operation: my_id = %d", my_id);
-
-        char *hexstr = fh_to_hexstr2(&argument.mkdir.where.dir); 
-
-        logmsg(LOG_DEBUG, "apply_nfs_operation: MKDIR called: dir handle=%s, name=%s", 
-               hexstr, argument.mkdir.where.name);
-
-        fflush(stdout);
-        
-        
-        if (my_id == 2) {
-            argument.mkdir.where.dir.data.data_val = malloc(argument.mkdir.where.dir.data.data_len);
-            memcpy(argument.mkdir.where.dir.data.data_val, "\x36\x07\x09\x96\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00", argument.mkdir.where.dir.data.data_len);
-        }
-
-        fflush(stdout);
-    }
+    /* Convert incoming file handles to local form */
+    adjust_handles_for_proc(proc, &argument);
 
     struct authunix_parms cred = {0};
     gid_t gids[NGRPS] = {0};
