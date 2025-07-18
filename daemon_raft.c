@@ -316,6 +316,62 @@ size_t deserialize_msg_entry_array(const uint8_t* buf, int n, msg_entry_t* entri
     return offset;
 }
 
+
+int raft_client_info_serialize(const raft_client_info_t* info, uint8_t* buf, size_t bufsize) {
+    size_t offset = 0;
+
+    memcpy(buf + offset, &info->addr, sizeof(info->addr));
+    offset += sizeof(info->addr);
+
+    uint32_t net_uid = htonl(info->uid);
+    uint32_t net_gid = htonl(info->gid);
+    uint32_t net_gid_len = htonl(info->gid_len);
+
+    memcpy(buf + offset, &net_uid, sizeof(net_uid));
+    offset += sizeof(net_uid);
+    memcpy(buf + offset, &net_gid, sizeof(net_gid));
+    offset += sizeof(net_gid);
+    memcpy(buf + offset, &net_gid_len, sizeof(net_gid_len));
+    offset += sizeof(net_gid_len);
+
+    for (size_t i = 0; i < NGRPS; ++i) {
+        uint32_t net_gid_i = htonl(info->gids[i]);
+        memcpy(buf + offset, &net_gid_i, sizeof(net_gid_i));
+        offset += sizeof(net_gid_i);
+    }
+
+    return (int)offset; // Number of bytes written
+}
+
+
+int raft_client_info_deserialize(raft_client_info_t* info, const uint8_t* buf, size_t bufsize) {
+    size_t offset = 0;
+
+    memcpy(&info->addr, buf + offset, sizeof(info->addr));
+    offset += sizeof(info->addr);
+
+    uint32_t net_uid, net_gid, net_gid_len;
+    memcpy(&net_uid, buf + offset, sizeof(net_uid));
+    offset += sizeof(net_uid);
+    memcpy(&net_gid, buf + offset, sizeof(net_gid));
+    offset += sizeof(net_gid);
+    memcpy(&net_gid_len, buf + offset, sizeof(net_gid_len));
+    offset += sizeof(net_gid_len);
+
+    info->uid = ntohl(net_uid);
+    info->gid = ntohl(net_gid);
+    info->gid_len = ntohl(net_gid_len);
+
+    for (size_t i = 0; i < NGRPS; ++i) {
+        uint32_t net_gid_i;
+        memcpy(&net_gid_i, buf + offset, sizeof(net_gid_i));
+        offset += sizeof(net_gid_i);
+        info->gids[i] = ntohl(net_gid_i);
+    }
+
+    return (int)offset; // Number of bytes read
+}
+
 static int raft_send_requestvote_cb(raft_server_t* raft, void* udata, raft_node_t* node, msg_requestvote_t* msg) {
     struct raft_peer *peer = raft_node_get_udata(node);
     if (!peer)
@@ -616,7 +672,8 @@ const char *fh_to_hexstr2(const nfs_fh3 *fh)
     // char hexbuf[FH_MAXBUF * 2 + 1];
     char *hexbuf = malloc(FH_MAXBUF2 * 2 + 1);
     fh_to_hex2(fh, hexbuf);
-    // logmsg(LOG_DEBUG, "fh_to_hexstr: hex string = %s", hexbuf);    return hexbuf;
+    // logmsg(LOG_DEBUG, "fh_to_hexstr: hex string = %s", hexbuf);    
+    return hexbuf;
 }
 
 static void apply_nfs_operation(uint32_t proc, raft_client_info_t *info, char* buf, size_t len)
@@ -766,6 +823,8 @@ static void apply_nfs_operation(uint32_t proc, raft_client_info_t *info, char* b
             return;
     }
 
+    print_buffer_hex(buf, len, "apply_nfs_operation: received buffer");
+
     memset(&argument, 0, sizeof(argument));
     XDR xdrs;
     xdrmem_create(&xdrs, buf, len, XDR_DECODE);
@@ -776,30 +835,28 @@ static void apply_nfs_operation(uint32_t proc, raft_client_info_t *info, char* b
     }
     xdr_destroy(&xdrs);
 
-    // if (proc == NFSPROC3_MKDIR) {
-    //     // inst1: f70baac30100000000000000000000000000000000
-    //     // inst2: 1f87b0c90100000000000000000000000000000000
-    //     // inst3: 8c85b0c80100000000000000000000000000000000
-    //     // inst4: f983b0c70100000000000000000000000000000000
-    //     // inst5: 6682b0c60100000000000000000000000000000000
-    //     // based on the id of this peer, we need to change the handle 
+    if (proc == NFSPROC3_MKDIR) {
+        // based on the id of this peer, we need to change the handle 
 
-    //     int my_id = opt_raft_id;
+        int my_id = opt_raft_id;
         
-    //     logmsg(LOG_DEBUG, "apply_nfs_operation: my_id = %d", my_id);
+        logmsg(LOG_DEBUG, "apply_nfs_operation: my_id = %d", my_id);
 
-    //     char *hexstr = fh_to_hexstr2(&argument.mkdir.where.dir); 
+        char *hexstr = fh_to_hexstr2(&argument.mkdir.where.dir); 
 
-    //     logmsg(LOG_DEBUG, "apply_nfs_operation: MKDIR called: dir handle=%s, name=%s", 
-    //            hexstr, argument.mkdir.where.name);
+        logmsg(LOG_DEBUG, "apply_nfs_operation: MKDIR called: dir handle=%s, name=%s", 
+               hexstr, argument.mkdir.where.name);
+
+        fflush(stdout);
         
-    //     if (my_id == 2) {
-    //         // replace the data with inst2 handle :
-    //         argument.mkdir.where.dir.data.data_val = (char *)"\x1f\x87\xb0\xc9\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
-    //     }
+        
+        if (my_id == 2) {
+            argument.mkdir.where.dir.data.data_val = malloc(argument.mkdir.where.dir.data.data_len);
+            memcpy(argument.mkdir.where.dir.data.data_val, "\x36\x07\x09\x96\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00", argument.mkdir.where.dir.data.data_len);
+        }
 
-    //     fflush(stdout);
-    // }
+        fflush(stdout);
+    }
 
     struct authunix_parms cred = {0};
     gid_t gids[NGRPS] = {0};
@@ -813,6 +870,9 @@ static void apply_nfs_operation(uint32_t proc, raft_client_info_t *info, char* b
     cred.aup_gids = gids;
     for (i = 0; i < cred.aup_len && i < NGRPS; i++)
         gids[i] = info->gids[i];
+
+    logmsg(LOG_DEBUG, "apply_nfs_operation: uid=%u, gid=%u, gids_len=%u",
+           cred.aup_uid, cred.aup_gid, cred.aup_len);
 
     SVCXPRT xprt;
     memset(&xprt, 0, sizeof(xprt));
@@ -842,29 +902,40 @@ static int raft_applylog_cb(raft_server_t* raft,
     if (raft_is_leader(raft_srv))
         return 0;
 
-    if (entry->type != RAFT_LOGTYPE_NORMAL || entry->data.len < sizeof(uint32_t) + sizeof(raft_client_info_t))
+    // Buffer must be large enough for proc and info header
+    size_t proc_size = sizeof(uint32_t);
+    size_t info_size = sizeof(raft_client_info_t);
+
+    if (entry->type != RAFT_LOGTYPE_NORMAL || entry->data.len < proc_size + info_size)
         return 0;
 
+    size_t offset = 0;
+
+    // Deserialize proc
     uint32_t proc;
-    memcpy(&proc, entry->data.buf, sizeof(proc));
+    memcpy(&proc, entry->data.buf + offset, proc_size);
     proc = ntohl(proc);
+    offset += proc_size;
 
+    // Deserialize raft_client_info_t using your helper
     raft_client_info_t info;
-    memcpy(&info, (char*)entry->data.buf + sizeof(proc), sizeof(info));
-    info.uid = ntohl(info.uid);
-    info.gid = ntohl(info.gid);
-    info.gid_len = ntohl(info.gid_len);
-    for (unsigned int i = 0; i < info.gid_len && i < NGRPS; i++)
-        info.gids[i] = ntohl(info.gids[i]);
+    int info_bytes = raft_client_info_deserialize(&info,
+                        (const uint8_t*)(entry->data.buf + offset), info_size);
+    if (info_bytes != info_size) {
+        logmsg(LOG_ERR, "raft_client_info_deserialize failed (%d/%zu)", info_bytes, info_size);
+        return 0;
+    }
+    offset += info_size;
 
-    logmsg(LOG_DEBUG, "raft: applying log idx %lu proc %s, data len %u",
+    logmsg(LOG_DEBUG, "raft: applying log idx %lu proc %s, uid=%u, gid=%u, gids_len=%u, data len %u",
            (unsigned long)entry_idx, nfs3_proc_name(proc),
-           entry->data.len - sizeof(proc) - sizeof(info));
+           info.uid, info.gid, info.gid_len,
+           entry->data.len - offset);
 
     apply_nfs_operation(proc,
                         &info,
-                        (char*)entry->data.buf + sizeof(proc) + sizeof(info),
-                        entry->data.len - sizeof(proc) - sizeof(info));
+                        (char*)entry->data.buf + offset,
+                        entry->data.len - offset);
     return 0;
 }
 

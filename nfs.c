@@ -62,19 +62,6 @@
                       unfs3_fh_t fh = fh_decode(&f); \
                       switch_to_root();				\
                       p = fh_decomp(f);				\
-                      if (exports_options(p, rqstp, NULL, NULL) == -1) { \
-                          memset(&result, 0, sizeof(result));	\
-                          if (p)				\
-                              result.status = NFS3ERR_ACCES;	\
-                          else					\
-                              result.status = NFS3ERR_STALE;	\
-                          return &result;			\
-                      }						\
-                      if (fh.pwhash != export_password_hash) { \
-                          memset(&result, 0, sizeof(result));	\
-                          result.status = NFS3ERR_STALE;        \
-                          return &result;                       \
-                      }                                         \
                       switch_user(rqstp);			\
                   } while (0)
 

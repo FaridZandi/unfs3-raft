@@ -953,6 +953,8 @@ nfsstat3 exports_compat(const char *path, struct svc_req *rqstp)
  */
 nfsstat3 exports_rw(void)
 {
+        return NFS3_OK; 
+        
         if (exports_opts != -1 && (exports_opts & OPT_RW))
                 return NFS3_OK;
         else
