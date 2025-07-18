@@ -35,6 +35,8 @@ raft_server_t *raft_srv = NULL;
 
 #define RAFT_PORT_BASE 7000
 #define RAFT_MAX_PKT 2048
+#define FH_MAXBUF2 64
+
 static int raft_sock = -1;
 
 struct raft_peer {
@@ -45,6 +47,19 @@ struct raft_peer {
 
 static struct raft_peer raft_peers[16];
 static int raft_peer_count = 0;
+
+
+
+static struct raft_peer* raft_peer_from_addr(struct sockaddr_in* addr) {
+    for (int i = 0; i < raft_peer_count; i++)
+        if (addr->sin_port == raft_peers[i].addr.sin_port && addr->sin_addr.s_addr == raft_peers[i].addr.sin_addr.s_addr)
+            return &raft_peers[i];
+    return NULL;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
 
 // --- Serialization ---
 size_t serialize_requestvote(const msg_requestvote_t* msg, uint8_t* buf) {
@@ -374,67 +389,14 @@ int raft_client_info_deserialize(raft_client_info_t* info, const uint8_t* buf, s
     return (int)offset; // Number of bytes read
 }
 
-static int raft_send_requestvote_cb(raft_server_t* raft, void* udata, raft_node_t* node, msg_requestvote_t* msg) {
-    struct raft_peer *peer = raft_node_get_udata(node);
-    if (!peer)
-        return -1;
+///////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////
+//// Network communication for Raft 
+//// receiving messages between peers.
+//// sends back proper responses.
+///////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////
 
-    char buf[RAFT_MAX_PKT];
-    size_t len = 0;
-    buf[len++] = 1;
-    len += serialize_requestvote(msg, buf + len);
-
-    ssize_t sent = sendto(raft_sock, buf, len, 0, (struct sockaddr*)&peer->addr, sizeof(peer->addr));
-
-    if (sent < 0) {
-        logmsg(LOG_ERR, "raft: sendto failed: %s", strerror(errno));
-        return -1;
-    } else if (sent < len) {
-        logmsg(LOG_WARNING, "raft: sent only %zd bytes, expected %zu bytes", sent, len);
-    } else {
-        logmsg(LOG_DEBUG, "raft: send requestvote to %d, term %ld, candidate %d", peer->id, msg->term, msg->candidate_id);
-    }
-
-    return 0;
-}
-
-static int raft_send_appendentries_cb(raft_server_t* raft, 
-                                      void* udata, 
-                                      raft_node_t* node, 
-                                      msg_appendentries_t* msg) {
-
-    struct raft_peer *peer = raft_node_get_udata(node);
-    if (!peer)
-        return -1;
-    uint8_t buf[RAFT_MAX_PKT];
-    size_t len = 0;
-
-    buf[len++] = 3;
-    len += serialize_appendentries(msg, buf + len);
-
-    if (msg->n_entries > 0 && msg->entries) {
-        len += serialize_msg_entry_array(msg->entries, msg->n_entries, buf + len);
-    }
-
-    // print_buffer_hex(buf, len, "raft: send appendentries");
-
-    ssize_t sent = sendto(raft_sock, buf, len, 0, (struct sockaddr*)&peer->addr, sizeof(peer->addr));
-    if (sent != len) {
-        logmsg(LOG_WARNING, "raft: sendto incomplete: sent %zd, expected %zu", sent, len);
-        return -1;
-    }
-
-    logmsg(LOG_DEBUG, "raft: send appendentries to %d, term %ld, prev_log_idx %ld, prev_log_term %ld, leader_commit %ld, n_entries %d", peer->id, msg->term, msg->prev_log_idx, msg->prev_log_term, msg->leader_commit, msg->n_entries);
-
-    return 0;
-}
-
-static struct raft_peer* raft_peer_from_addr(struct sockaddr_in* addr) {
-    for (int i = 0; i < raft_peer_count; i++)
-        if (addr->sin_port == raft_peers[i].addr.sin_port && addr->sin_addr.s_addr == raft_peers[i].addr.sin_addr.s_addr)
-            return &raft_peers[i];
-    return NULL;
-}
 
 static void handle_requestvote(const struct raft_peer* peer, 
                           char* ptr, 
@@ -518,6 +480,7 @@ static void handle_requestvote(const struct raft_peer* peer,
     logmsg(LOG_DEBUG, "raft: sent requestvote response to %d, term %ld, vote %d", peer->id, resp.term, resp.vote_granted);
 }
 
+
 static void handle_requestvote_response(const struct raft_peer* peer, 
                                         char* ptr) {
     logmsg(LOG_DEBUG, "raft: received requestvote response from peerid=%d", peer->id);
@@ -530,7 +493,12 @@ static void handle_requestvote_response(const struct raft_peer* peer,
     raft_recv_requestvote_response(raft_srv, peer->node, &r);
 }
 
-static void handle_appendentries(const struct raft_peer* peer, char* ptr, struct sockaddr_in* src, socklen_t slen) {
+
+static void handle_appendentries(const struct raft_peer* peer, 
+                                 char* ptr, 
+                                 struct sockaddr_in* src, 
+                                 socklen_t slen) {
+
     logmsg(LOG_DEBUG, "raft: received appendentries from %s:%d", inet_ntoa(src->sin_addr), ntohs(src->sin_port));
 
     msg_appendentries_t ae;
@@ -591,66 +559,10 @@ static void handle_appendentries_response(const struct raft_peer* peer,
     raft_recv_appendentries_response(raft_srv, peer->node, &r);
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
 
-static int raft_persist_term_cb(raft_server_t* raft, 
-                                void* udata, 
-                                raft_term_t term, 
-                                raft_node_id_t vote) {
 
-    (void)raft; (void)udata; (void)term; (void)vote;
-    logmsg(LOG_DEBUG, "raft: persist term %llu, vote %d", (unsigned long long)term, vote);
-    return 0;
-}
-
-static int raft_persist_vote_cb(raft_server_t* raft,
-                                void* udata,
-                                raft_node_id_t vote) {
-
-    (void)raft; (void)udata; (void)vote;
-    logmsg(LOG_DEBUG, "raft: persist vote %d", vote);
-    return 0;
-}
-
-static int raft_log_offer_cb(raft_server_t* raft,
-                             void* udata,
-                             raft_entry_t* entry,
-                             raft_index_t entry_idx) {
-    (void)raft; (void)udata; (void)entry_idx;
-    logmsg(LOG_DEBUG, "raft: log offer callback called, idx %lu, term %llu, id %llu, type %d",
-           (unsigned long)entry_idx,
-           (unsigned long long)entry->term,
-           (unsigned long long)entry->id,
-           entry->type);    
-
-    if (entry->data.len >= sizeof(uint32_t)) {
-        uint32_t proc;
-        memcpy(&proc, entry->data.buf, sizeof(proc));
-        proc = ntohl(proc);
-        raft_log_entry(proc, (char*)entry->data.buf + sizeof(proc),
-                       entry->data.len - sizeof(proc));
-    }
-    return 0;
-}
-
-static int raft_log_poll_cb(raft_server_t* raft,
-                            void* udata,
-                            raft_entry_t* entry,
-                            raft_index_t entry_idx) {
-    logmsg(LOG_DEBUG, "raft: log poll callback called, idx %lu, term %llu", 
-              (unsigned long)entry_idx, (unsigned long long)entry->term);    
-    return 0;
-}
-
-static int raft_log_pop_cb(raft_server_t* raft,
-                           void* udata,
-                           raft_entry_t* entry,
-                           raft_index_t entry_idx) {
-    logmsg(LOG_DEBUG, "raft: log pop callback called, idx %lu, term %llu",
-           (unsigned long)entry_idx, (unsigned long long)entry->term);
-    return 0;
-}
-
-#define FH_MAXBUF2 64
 
 /* ----------------------------------------------------------------------
  * Handle translation helpers
@@ -847,8 +759,6 @@ static void apply_nfs_operation(uint32_t proc, raft_client_info_t *info, char* b
     xdrproc_t xdr_argument;
     char *(*local)(char *, struct svc_req *);
 
-
-
     logmsg(LOG_DEBUG, "apply_nfs_operation: proc %u, buf %p, len %zu", proc, buf, len); 
     
     switch (proc) {
@@ -1015,6 +925,127 @@ static void apply_nfs_operation(uint32_t proc, raft_client_info_t *info, char* b
     (void)local((char *)&argument, &dummy);
 }
 
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+//// Raft callbacks
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+static int raft_send_requestvote_cb(raft_server_t* raft, void* udata, raft_node_t* node, msg_requestvote_t* msg) {
+    struct raft_peer *peer = raft_node_get_udata(node);
+    if (!peer)
+        return -1;
+
+    char buf[RAFT_MAX_PKT];
+    size_t len = 0;
+    buf[len++] = 1;
+    len += serialize_requestvote(msg, buf + len);
+
+    ssize_t sent = sendto(raft_sock, buf, len, 0, (struct sockaddr*)&peer->addr, sizeof(peer->addr));
+
+    if (sent < 0) {
+        logmsg(LOG_ERR, "raft: sendto failed: %s", strerror(errno));
+        return -1;
+    } else if (sent < len) {
+        logmsg(LOG_WARNING, "raft: sent only %zd bytes, expected %zu bytes", sent, len);
+    } else {
+        logmsg(LOG_DEBUG, "raft: send requestvote to %d, term %ld, candidate %d", peer->id, msg->term, msg->candidate_id);
+    }
+
+    return 0;
+}
+
+static int raft_send_appendentries_cb(raft_server_t* raft, 
+                                      void* udata, 
+                                      raft_node_t* node, 
+                                      msg_appendentries_t* msg) {
+
+    struct raft_peer *peer = raft_node_get_udata(node);
+    if (!peer)
+        return -1;
+    uint8_t buf[RAFT_MAX_PKT];
+    size_t len = 0;
+
+    buf[len++] = 3;
+    len += serialize_appendentries(msg, buf + len);
+
+    if (msg->n_entries > 0 && msg->entries) {
+        len += serialize_msg_entry_array(msg->entries, msg->n_entries, buf + len);
+    }
+
+    // print_buffer_hex(buf, len, "raft: send appendentries");
+
+    ssize_t sent = sendto(raft_sock, buf, len, 0, (struct sockaddr*)&peer->addr, sizeof(peer->addr));
+    if (sent != len) {
+        logmsg(LOG_WARNING, "raft: sendto incomplete: sent %zd, expected %zu", sent, len);
+        return -1;
+    }
+
+    logmsg(LOG_DEBUG, "raft: send appendentries to %d, term %ld, prev_log_idx %ld, prev_log_term %ld, leader_commit %ld, n_entries %d", peer->id, msg->term, msg->prev_log_idx, msg->prev_log_term, msg->leader_commit, msg->n_entries);
+
+    return 0;
+}
+
+
+static int raft_persist_term_cb(raft_server_t* raft, 
+                                void* udata, 
+                                raft_term_t term, 
+                                raft_node_id_t vote) {
+
+    (void)raft; (void)udata; (void)term; (void)vote;
+    logmsg(LOG_DEBUG, "raft: persist term %llu, vote %d", (unsigned long long)term, vote);
+    return 0;
+}
+
+static int raft_persist_vote_cb(raft_server_t* raft,
+                                void* udata,
+                                raft_node_id_t vote) {
+
+    (void)raft; (void)udata; (void)vote;
+    logmsg(LOG_DEBUG, "raft: persist vote %d", vote);
+    return 0;
+}
+
+static int raft_log_offer_cb(raft_server_t* raft,
+                             void* udata,
+                             raft_entry_t* entry,
+                             raft_index_t entry_idx) {
+    (void)raft; (void)udata; (void)entry_idx;
+    logmsg(LOG_DEBUG, "raft: log offer callback called, idx %lu, term %llu, id %llu, type %d",
+           (unsigned long)entry_idx,
+           (unsigned long long)entry->term,
+           (unsigned long long)entry->id,
+           entry->type);    
+
+    if (entry->data.len >= sizeof(uint32_t)) {
+        uint32_t proc;
+        memcpy(&proc, entry->data.buf, sizeof(proc));
+        proc = ntohl(proc);
+        raft_log_entry(proc, (char*)entry->data.buf + sizeof(proc),
+                       entry->data.len - sizeof(proc));
+    }
+    return 0;
+}
+
+static int raft_log_poll_cb(raft_server_t* raft,
+                            void* udata,
+                            raft_entry_t* entry,
+                            raft_index_t entry_idx) {
+    logmsg(LOG_DEBUG, "raft: log poll callback called, idx %lu, term %llu", 
+              (unsigned long)entry_idx, (unsigned long long)entry->term);    
+    return 0;
+}
+
+static int raft_log_pop_cb(raft_server_t* raft,
+                           void* udata,
+                           raft_entry_t* entry,
+                           raft_index_t entry_idx) {
+    logmsg(LOG_DEBUG, "raft: log pop callback called, idx %lu, term %llu",
+           (unsigned long)entry_idx, (unsigned long long)entry->term);
+    return 0;
+}
+
+
 static int raft_applylog_cb(raft_server_t* raft,
                             void* udata,
                             raft_entry_t* entry,
@@ -1061,6 +1092,11 @@ static int raft_applylog_cb(raft_server_t* raft,
                         entry->data.len - offset);
     return 0;
 }
+
+
+
+
+
 
 void raft_init(void) {
     raft_srv = raft_new();
