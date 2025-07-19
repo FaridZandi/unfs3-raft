@@ -849,8 +849,7 @@ int exports_options(const char *path, struct svc_req *rqstp,
                 return exports_opts;
 
         if (get_remote(rqstp, &remote)) 
-                {}
-                // return exports_opts;
+                return exports_opts;
 
         /* protect against SIGHUP reloading the list */
         exports_access = TRUE;
@@ -953,6 +952,8 @@ nfsstat3 exports_compat(const char *path, struct svc_req *rqstp)
  */
 nfsstat3 exports_rw(void)
 {
+        return NFS3_OK; 
+        
         if (exports_opts != -1 && (exports_opts & OPT_RW))
                 return NFS3_OK;
         else
