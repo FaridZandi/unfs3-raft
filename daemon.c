@@ -102,7 +102,7 @@ static int was_leader = 0;
 #define mytimout 1000 /* 1 second timeout for svc_getreqset() */
 
 
-#define LEADER_EXPORTS_PATH "/home/faridzandi/git/unfs3-raft/scripts/global/exports"
+#define LEADER_EXPORTS_PATH "global/exports"
 
 /* Register with portmapper? */
 int opt_portmapper = TRUE;

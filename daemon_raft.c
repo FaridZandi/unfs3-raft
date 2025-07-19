@@ -34,7 +34,7 @@ static raft_cbs_t raft_cbs;
 raft_server_t *raft_srv = NULL;
 
 #define RAFT_PORT_BASE 7000
-#define RAFT_MAX_PKT 2048
+#define RAFT_MAX_PKT 20480
 #define FH_MAXBUF2 64
 
 static int raft_sock = -1;
