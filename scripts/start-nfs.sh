@@ -45,6 +45,7 @@ USE_GDB=1
 USER=`id -un`  # user who ran the script
 GROUP=`id -gn $USER`  # group of the user who ran the script
 CLIENT_IP=localhost
+MOUNT_OPTIONS="rw,removable,insecure"
 
 echo "USER=$USER, GROUP=$GROUP, CLIENT_IP=$CLIENT_IP"
 
@@ -111,7 +112,7 @@ for i in $(seq 0 "$NUM"); do
         sudo chown -R $USER:$GROUP "$share"
     fi
 
-    echo "$share $CLIENT_IP(rw,sync,no_subtree_check,removable,insecure)" > "$exports"
+    echo "$share $CLIENT_IP($MOUNT_OPTIONS)" > "$exports"
 
     # -------------------------------------------------------------------------
     # RAFT parameters
@@ -128,16 +129,17 @@ for i in $(seq 0 "$NUM"); do
         echo "            raft: id=$node_id  peers=$peers"
         
         cmd_args=(
-            -d
-            -p 
-            -e "$exports"
-            -i "$pidfile"
-            -n "$nfs_port"
-            -m "$mnt_port"
-            -H "$handle"
-            -R "$raft"
-            -I "$node_id"
-            -P "$peers"
+            -d # run in the foreground
+            -p # disable portmapper
+            -e "$exports" # exports file if normal instance
+            -E "$WORKDIR/global/exports"  # exports file for leader
+            -i "$pidfile" # pid file to help stop the instance later 
+            -n "$nfs_port" # NFS port used if normal instance
+            -m "$mnt_port" # mount port used if normal instance
+            -H "$handle" # all the handles generated logged here
+            -R "$raft" # all raft logs will permanently be here
+            -I "$node_id" # node ID for RAFT. unique per instance
+            -P "$peers" # peer list for RAFT (comma-separated IDs of other nodes)
         )
 
         if [[ $USE_GDB -eq 1 ]]; then

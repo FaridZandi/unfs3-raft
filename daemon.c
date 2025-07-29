@@ -78,6 +78,8 @@ cookie3 rcookie = 0;
 /* options and default values */
 int opt_detach = TRUE;
 char *opt_exports = "/etc/exports";
+char *opt_exports_leader = "/etc/exports"; // Exports for the leader
+
 int opt_cluster = FALSE;
 char *opt_cluster_path = "/";
 int opt_tcponly = FALSE;
@@ -102,7 +104,7 @@ static int was_leader = 0;
 #define mytimout 1000 /* 1 second timeout for svc_getreqset() */
 
 
-#define LEADER_EXPORTS_PATH "global/exports"
+// #define LEADER_EXPORTS_PATH "/home/faridzandi/git/unfs3-raft/scripts/global/exports"
 
 /* Register with portmapper? */
 int opt_portmapper = TRUE;
@@ -153,11 +155,12 @@ static void wait_for_leader(void)
 
     int leader = raft_get_current_leader(raft_srv);
     logmsg(LOG_INFO, "Raft leader elected: %d", leader);
+    
     if (raft_is_leader(raft_srv)) {
         logmsg(LOG_INFO, "This node is the leader; binding to port 2049");
-        opt_exports = "/home/faridzandi/git/unfs3-raft/scripts/global/exports";
-        opt_nfs_port = 2049;
-        opt_mount_port = 2049;
+        opt_exports = opt_exports_leader;
+        opt_nfs_port = NFS_PORT;
+        opt_mount_port = NFS_PORT;
     }
 
     logmsg(LOG_INFO, "Raft leader election complete, going live!");
@@ -364,7 +367,7 @@ static void remove_pid_file(void)
 static void parse_options(int argc, char **argv)
 {
     int opt = 0;
-    char *optstring = "3bcC:de:hl:m:n:prstTuwi:R:H:I:P:";
+    char *optstring = "3bcC:de:E:hl:m:n:prstTuwi:R:H:I:P:";
 
 #if defined(WIN32) || defined(AFS_SUPPORT)
     /* Allways truncate to 32 bits in these cases */
@@ -403,6 +406,17 @@ static void parse_options(int argc, char **argv)
 #endif
                 opt_exports = optarg;
                 break;
+            case 'E':   
+#ifndef WIN32
+                if (optarg[0] != '/') {
+                    /* A relative path won't work for re-reading the exports
+                       file on SIGHUP, since we are changing directory */
+                    fprintf(stderr, "Error: relative path to exports file\n");
+                    exit(1);
+                }
+#endif
+                opt_exports_leader = optarg;
+                break;
             case 'h':
                 printf(UNFS_NAME);
                 printf("Usage: %s [options]\n", argv[0]);
@@ -410,6 +424,7 @@ static void parse_options(int argc, char **argv)
                 printf("\t-u          use unprivileged port for services\n");
                 printf("\t-d          do not detach from terminal\n");
                 printf("\t-e <file>   file to use instead of /etc/exports\n");
+                printf("\t-E <file>   file to use instead of /etc/exports for leader\n");
                 printf("\t-i <file>   write daemon pid to given file\n");
 #ifdef WANT_CLUSTER
                 printf("\t-c          enable cluster extensions\n");
@@ -1611,9 +1626,9 @@ static SVCXPRT *create_tcp_transport(unsigned int port)
 /* Take over NFS and MOUNT services when this node becomes leader */
 static void become_leader(void)
 {
-    opt_exports = LEADER_EXPORTS_PATH;
-    opt_nfs_port = 2049;
-    opt_mount_port = 2049;
+    opt_exports = opt_exports_leader; 
+    opt_nfs_port = NFS_PORT;
+    opt_mount_port = NFS_PORT; 
 
     if (nfs_udptransp)
         svc_destroy(nfs_udptransp);
@@ -1825,6 +1840,7 @@ int main(int argc, char **argv)
     }
 
     /* create pid file if wanted */
+    // had to move this higher up, beacuse sometimes the election takes a while. 
     create_pid_file();
 
     raft_init();
