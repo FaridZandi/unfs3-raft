@@ -103,9 +103,6 @@ static int was_leader = 0;
 
 #define mytimout 1000 /* 1 second timeout for svc_getreqset() */
 
-
-// #define LEADER_EXPORTS_PATH "/home/faridzandi/git/unfs3-raft/scripts/global/exports"
-
 /* Register with portmapper? */
 int opt_portmapper = TRUE;
 
@@ -158,9 +155,9 @@ static void wait_for_leader(void)
     
     if (raft_is_leader(raft_srv)) {
         logmsg(LOG_INFO, "This node is the leader; binding to port 2049");
-        opt_exports = opt_exports_leader;
-        opt_nfs_port = NFS_PORT;
-        opt_mount_port = NFS_PORT;
+        // opt_exports = opt_exports_leader;
+        // opt_nfs_port = NFS_PORT;
+        // opt_mount_port = NFS_PORT;
     }
 
     logmsg(LOG_INFO, "Raft leader election complete, going live!");
@@ -573,7 +570,7 @@ static void refresh_handle(nfs_fh3 *fh, struct svc_req *rqstp)
             }
         }
     }
-}
+} 
 
 /*
  * Convert any filehandles contained in the RPC arguments into paths and
@@ -1877,31 +1874,42 @@ int main(int argc, char **argv)
         openlog("unfsd", LOG_CONS | LOG_PID, LOG_DAEMON);
     }
 
-    /* NFS transports */
-    if (!opt_tcponly)
-        udptransp = create_udp_transport(opt_nfs_port);
-    tcptransp = create_tcp_transport(opt_nfs_port);
+    if (was_leader) {
+        // // The leader will bind to the ports and run the services.
+        // // The followers will not bind to the ports. They will only need to 
+        // // handle raft events and apply them to their local state.
 
-    nfs_udptransp = udptransp;
-    nfs_tcptransp = tcptransp;
-    
-    logmsg(LOG_INFO, "NFS server starting on port %d", opt_nfs_port);
-    register_nfs_service(nfs_udptransp, nfs_tcptransp);
+        // logmsg(LOG_INFO, "I am the leader, binding to ports and starting services");
 
-    /* MOUNT transports. If ports are equal, then the MOUNT service can reuse
-       the NFS transports. */
-    if (opt_mount_port != opt_nfs_port) {
-        if (!opt_tcponly)
-            udptransp = create_udp_transport(opt_mount_port);
-        tcptransp = create_tcp_transport(opt_mount_port);
+        // /* NFS transports */
+        // if (!opt_tcponly)
+        //     udptransp = create_udp_transport(opt_nfs_port);
+        // tcptransp = create_tcp_transport(opt_nfs_port);
+
+        // nfs_udptransp = udptransp;
+        // nfs_tcptransp = tcptransp;
+        
+        // logmsg(LOG_INFO, "NFS server starting on port %d", opt_nfs_port);
+        // register_nfs_service(nfs_udptransp, nfs_tcptransp);
+
+        // /* MOUNT transports. If ports are equal, then the MOUNT service can reuse
+        // the NFS transports. */
+        // if (opt_mount_port != opt_nfs_port) {
+        //     if (!opt_tcponly)
+        //         udptransp = create_udp_transport(opt_mount_port);
+        //     tcptransp = create_tcp_transport(opt_mount_port);
+        // }
+
+        // mount_udptransp = (opt_mount_port != opt_nfs_port) ? udptransp : nfs_udptransp;
+        // mount_tcptransp = (opt_mount_port != opt_nfs_port) ? tcptransp : nfs_tcptransp;
+        
+        // logmsg(LOG_INFO, "MOUNT server starting on port %d", opt_mount_port);
+
+        // register_mount_service(mount_udptransp, mount_tcptransp);
+
+        become_leader();
     }
-
-    mount_udptransp = (opt_mount_port != opt_nfs_port) ? udptransp : nfs_udptransp;
-    mount_tcptransp = (opt_mount_port != opt_nfs_port) ? tcptransp : nfs_tcptransp;
     
-    logmsg(LOG_INFO, "MOUNT server starting on port %d", opt_mount_port);
-
-    register_mount_service(mount_udptransp, mount_tcptransp);
 
 #ifndef WIN32
     if (opt_detach) {
