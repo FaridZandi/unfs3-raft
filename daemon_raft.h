@@ -22,4 +22,20 @@ typedef struct raft_client_info {
 void raft_init(void);
 void raft_net_receive(void);
 
+
+// some helper functions for debugging
+const char *nfs3_proc_name(u_long proc); 
+const char *mountproc_name(u_long proc); 
+void print_buffer_hex(const void *buf, size_t len, const char *label);
+
+/* Wait for leader election before starting NFS services */
+void wait_for_leader(void);
+
+// Implementation for raft_serialize_and_replicate_nfs_op
+    
+void raft_serialize_and_replicate_nfs_op(struct svc_req *rqstp, 
+                                         struct in6_addr remote_addr, 
+                                         xdrproc_t _xdr_argument, 
+                                         void *argument);
+
 #endif /* DAEMON_RAFT_H */

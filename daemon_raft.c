@@ -58,6 +58,170 @@ static struct raft_peer* raft_peer_from_addr(struct sockaddr_in* addr) {
 }
 
 
+const char *nfs3_proc_name(u_long proc)
+{
+    switch (proc) {
+        case NFSPROC3_NULL: return "NULL";
+        case NFSPROC3_GETATTR: return "GETATTR";
+        case NFSPROC3_SETATTR: return "SETATTR";
+        case NFSPROC3_LOOKUP: return "LOOKUP";
+        case NFSPROC3_ACCESS: return "ACCESS";
+        case NFSPROC3_READLINK: return "READLINK";
+        case NFSPROC3_READ: return "READ";
+        case NFSPROC3_WRITE: return "WRITE";
+        case NFSPROC3_CREATE: return "CREATE";
+        case NFSPROC3_MKDIR: return "MKDIR";
+        case NFSPROC3_SYMLINK: return "SYMLINK";
+        case NFSPROC3_MKNOD: return "MKNOD";
+        case NFSPROC3_REMOVE: return "REMOVE";
+        case NFSPROC3_RMDIR: return "RMDIR";
+        case NFSPROC3_RENAME: return "RENAME";
+        case NFSPROC3_LINK: return "LINK";
+        case NFSPROC3_READDIR: return "READDIR";
+        case NFSPROC3_READDIRPLUS: return "READDIRPLUS";
+        case NFSPROC3_FSSTAT: return "FSSTAT";
+        case NFSPROC3_FSINFO: return "FSINFO";
+        case NFSPROC3_PATHCONF: return "PATHCONF";
+        case NFSPROC3_COMMIT: return "COMMIT";
+        default: return "UNKNOWN";
+    }
+}
+
+const char *mountproc_name(u_long proc)
+{
+    switch (proc) {
+        case MOUNTPROC_NULL: return "NULL";
+        case MOUNTPROC_MNT: return "MNT";
+        case MOUNTPROC_DUMP: return "DUMP";
+        case MOUNTPROC_UMNT: return "UMNT";
+        case MOUNTPROC_UMNTALL: return "UMNTALL";
+        case MOUNTPROC_EXPORT: return "EXPORT";
+        default: return "UNKNOWN";
+    }
+}
+
+// Prints the contents of 'buf' as hex, 'len' bytes, with 'bytes_per_line' bytes per line.
+void print_buffer_hex(const void *buf, size_t len, const char *label)
+{
+    const int bytes_per_line = 16; // Change this to adjust how many bytes per line 
+
+    const unsigned char *p = (const unsigned char *)buf;
+    if (label)
+        fprintf(stderr, "%s (len=%zu):\n", label, len);
+
+    for (size_t i = 0; i < len; ++i) {
+        fprintf(stderr, "%02x ", p[i]);
+        if ((i + 1) % bytes_per_line == 0) {
+            // Optionally print ASCII representation
+            fprintf(stderr, " | ");
+            for (size_t j = i + 1 - bytes_per_line; j <= i; ++j)
+                fprintf(stderr, "%c", isprint(p[j]) ? p[j] : '.');
+            fprintf(stderr, "\n");
+        }
+    }
+
+    // Handle last line if it's not a full line
+    if (len % bytes_per_line) {
+        int pad = (bytes_per_line - (len % bytes_per_line)) * 3;
+        for (int i = 0; i < pad; ++i)
+            fprintf(stderr, " ");
+        fprintf(stderr, " | ");
+        for (size_t j = len - (len % bytes_per_line); j < len; ++j)
+            fprintf(stderr, "%c", isprint(p[j]) ? p[j] : '.');
+        fprintf(stderr, "\n");
+    }
+
+    fflush(stderr); 
+}
+
+/* Wait for leader election before starting NFS services */
+void wait_for_leader(void)
+{
+    logmsg(LOG_INFO, "waiting for Raft leader election");
+    
+    while (raft_get_current_leader(raft_srv) == -1) {
+        raft_periodic(raft_srv, mytimout);
+        raft_net_receive();
+        usleep(mytimout * 1000); // Sleep for 1 second
+    }
+
+    int leader = raft_get_current_leader(raft_srv);
+    logmsg(LOG_INFO, "Raft leader elected: %d", leader);
+    
+    if (raft_is_leader(raft_srv)) {
+        logmsg(LOG_INFO, "This node is the leader; binding to port 2049");
+    } else {
+        logmsg(LOG_INFO, "This node is a follower; waiting for leader to send requests");
+    } 
+}
+
+
+void raft_serialize_and_replicate_nfs_op(struct svc_req *rqstp, 
+                                         struct in6_addr remote_addr, 
+                                         xdrproc_t _xdr_argument, 
+                                         void *argument) {
+    if (raft_is_leader(raft_srv)) {
+        u_int arg_len = xdr_sizeof(_xdr_argument, (char *)argument);
+        if (arg_len > 0) {
+            size_t info_size = sizeof(raft_client_info_t);
+            size_t proc_size = sizeof(uint32_t);
+            size_t total_size = proc_size + info_size + arg_len;
+
+            char *buf = malloc(total_size);
+            if (buf) {
+                size_t offset = 0;
+
+                uint32_t proc = htonl(rqstp->rq_proc);
+                memcpy(buf + offset, &proc, proc_size);
+                offset += proc_size;
+
+                raft_client_info_t info = {0};
+                info.addr = remote_addr;
+                if (rqstp->rq_cred.oa_flavor == AUTH_UNIX) {
+                    struct authunix_parms *auth = (struct authunix_parms *)rqstp->rq_clntcred;
+                    info.uid = auth->aup_uid;
+                    info.gid = auth->aup_gid;
+                    info.gid_len = auth->aup_len;
+                    for (u_int i = 0; i < auth->aup_len && i < NGRPS; i++)
+                        info.gids[i] = auth->aup_gids[i];
+                }
+
+                int written = raft_client_info_serialize(&info, (uint8_t *)(buf + offset), info_size);
+                if (written != info_size) {
+                    logmsg(LOG_ERR, "Serialization of raft_client_info_t failed");
+                    free(buf);
+                    return;
+                }
+
+                offset += info_size;
+
+                XDR xdrs;
+                xdrmem_create(&xdrs, buf + offset, arg_len, XDR_ENCODE);
+                if (((xdrproc_t)_xdr_argument)(&xdrs, (char *)argument)) {
+                    msg_entry_t ety = {0};
+                    ety.data.buf = buf;
+                    ety.data.len = offset + arg_len;
+                    ety.id = raft_get_current_idx(raft_srv) + 1;
+                    ety.type = RAFT_LOGTYPE_NORMAL;
+
+                    msg_entry_response_t resp;
+                    if (0 == raft_recv_entry(raft_srv, &ety, &resp)) {
+                        while (raft_get_commit_idx(raft_srv) < resp.idx) {
+                            sleep(mytimout / 1000);
+                            raft_periodic(raft_srv, mytimout);
+                            raft_net_receive();
+                        }
+                    }
+                }
+                xdr_destroy(&xdrs);
+                free(buf);
+            }
+        }
+    }
+}
+
+
+
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
 

@@ -95,73 +95,24 @@ int opt_32_bit_truncate = FALSE;
 char *opt_handle_log = "handle.log";
 
 /* Global RPC transport handles so we can re-register services */
+// these are probably not needed anymore. TODO: remove
 static SVCXPRT *nfs_udptransp = NULL;
 static SVCXPRT *nfs_tcptransp = NULL;
 static SVCXPRT *mount_udptransp = NULL;
 static SVCXPRT *mount_tcptransp = NULL;
+
+
+
 static int was_leader = 0;
 
-#define mytimout 1000 /* 1 second timeout for svc_getreqset() */
+
 
 /* Register with portmapper? */
 int opt_portmapper = TRUE;
 
-// Prints the contents of 'buf' as hex, 'len' bytes, with 'bytes_per_line' bytes per line.
-void print_buffer_hex(const void *buf, size_t len, const char *label)
-{
-    const int bytes_per_line = 16; // Change this to adjust how many bytes per line 
 
-    const unsigned char *p = (const unsigned char *)buf;
-    if (label)
-        fprintf(stderr, "%s (len=%zu):\n", label, len);
 
-    for (size_t i = 0; i < len; ++i) {
-        fprintf(stderr, "%02x ", p[i]);
-        if ((i + 1) % bytes_per_line == 0) {
-            // Optionally print ASCII representation
-            fprintf(stderr, " | ");
-            for (size_t j = i + 1 - bytes_per_line; j <= i; ++j)
-                fprintf(stderr, "%c", isprint(p[j]) ? p[j] : '.');
-            fprintf(stderr, "\n");
-        }
-    }
 
-    // Handle last line if it's not a full line
-    if (len % bytes_per_line) {
-        int pad = (bytes_per_line - (len % bytes_per_line)) * 3;
-        for (int i = 0; i < pad; ++i)
-            fprintf(stderr, " ");
-        fprintf(stderr, " | ");
-        for (size_t j = len - (len % bytes_per_line); j < len; ++j)
-            fprintf(stderr, "%c", isprint(p[j]) ? p[j] : '.');
-        fprintf(stderr, "\n");
-    }
-
-    fflush(stderr); 
-}
-
-/* Wait for leader election before starting NFS services */
-static void wait_for_leader(void)
-{
-    logmsg(LOG_INFO, "waiting for Raft leader election");
-    while (raft_get_current_leader(raft_srv) == -1) {
-        raft_periodic(raft_srv, 100);
-        raft_net_receive();
-        usleep(100000); /* 100ms */
-    }
-
-    int leader = raft_get_current_leader(raft_srv);
-    logmsg(LOG_INFO, "Raft leader elected: %d", leader);
-    
-    if (raft_is_leader(raft_srv)) {
-        logmsg(LOG_INFO, "This node is the leader; binding to port 2049");
-        // opt_exports = opt_exports_leader;
-        // opt_nfs_port = NFS_PORT;
-        // opt_mount_port = NFS_PORT;
-    }
-
-    logmsg(LOG_INFO, "Raft leader election complete, going live!");
-}
 
 
 void logmsg(int prio, const char *fmt, ...)
@@ -196,48 +147,6 @@ static void fh_to_hex(const nfs_fh3 *fh, char *out)
     for (i = 0; i < len && i < FH_MAXBUF; i++)
         sprintf(out + i * 2, "%02x", d[i]);
     out[i * 2] = '\0';
-}
-
-const char *nfs3_proc_name(u_long proc)
-{
-    switch (proc) {
-        case NFSPROC3_NULL: return "NULL";
-        case NFSPROC3_GETATTR: return "GETATTR";
-        case NFSPROC3_SETATTR: return "SETATTR";
-        case NFSPROC3_LOOKUP: return "LOOKUP";
-        case NFSPROC3_ACCESS: return "ACCESS";
-        case NFSPROC3_READLINK: return "READLINK";
-        case NFSPROC3_READ: return "READ";
-        case NFSPROC3_WRITE: return "WRITE";
-        case NFSPROC3_CREATE: return "CREATE";
-        case NFSPROC3_MKDIR: return "MKDIR";
-        case NFSPROC3_SYMLINK: return "SYMLINK";
-        case NFSPROC3_MKNOD: return "MKNOD";
-        case NFSPROC3_REMOVE: return "REMOVE";
-        case NFSPROC3_RMDIR: return "RMDIR";
-        case NFSPROC3_RENAME: return "RENAME";
-        case NFSPROC3_LINK: return "LINK";
-        case NFSPROC3_READDIR: return "READDIR";
-        case NFSPROC3_READDIRPLUS: return "READDIRPLUS";
-        case NFSPROC3_FSSTAT: return "FSSTAT";
-        case NFSPROC3_FSINFO: return "FSINFO";
-        case NFSPROC3_PATHCONF: return "PATHCONF";
-        case NFSPROC3_COMMIT: return "COMMIT";
-        default: return "UNKNOWN";
-    }
-}
-
-static const char *mountproc_name(u_long proc)
-{
-    switch (proc) {
-        case MOUNTPROC_NULL: return "NULL";
-        case MOUNTPROC_MNT: return "MNT";
-        case MOUNTPROC_DUMP: return "DUMP";
-        case MOUNTPROC_UMNT: return "UMNT";
-        case MOUNTPROC_UMNTALL: return "UMNTALL";
-        case MOUNTPROC_EXPORT: return "EXPORT";
-        default: return "UNKNOWN";
-    }
 }
 
 /*
@@ -947,69 +856,7 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
     // preprocess_handles(rqstp->rq_proc, &argument, rqstp);
     
     /* Serialize and replicate the operation using Raft */
-    if (raft_is_leader(raft_srv)) {
-        u_int arg_len = xdr_sizeof(_xdr_argument, (char *)&argument);
-        if (arg_len > 0) {
-            // Calculate sizes using your serialization helpers
-            size_t info_size = sizeof(raft_client_info_t); // For now, fixed-size
-            size_t proc_size = sizeof(uint32_t);
-            size_t total_size = proc_size + info_size + arg_len;
-
-            char *buf = malloc(total_size);
-            if (buf) {
-                size_t offset = 0;
-
-                // Serialize proc
-                uint32_t proc = htonl(rqstp->rq_proc);
-                memcpy(buf + offset, &proc, proc_size);
-                offset += proc_size;
-
-                // Fill in raft_client_info_t in HOST order
-                raft_client_info_t info = {0};
-                info.addr = remote_addr;
-                if (rqstp->rq_cred.oa_flavor == AUTH_UNIX) {
-                    struct authunix_parms *auth = (struct authunix_parms *)rqstp->rq_clntcred;
-                    info.uid = auth->aup_uid;
-                    info.gid = auth->aup_gid;
-                    info.gid_len = auth->aup_len;
-                    for (u_int i = 0; i < auth->aup_len && i < NGRPS; i++)
-                        info.gids[i] = auth->aup_gids[i];
-                }
-
-                // Use your new serialize function (network order handled inside!)
-                int written = raft_client_info_serialize(&info, (uint8_t *)(buf + offset), info_size);
-                if (written != info_size) {
-                    logmsg(LOG_ERR, "Serialization of raft_client_info_t failed");
-                    free(buf);
-                    return;
-                }
-                
-                offset += info_size;
-
-                // Serialize the NFS argument using XDR as before
-                XDR xdrs;
-                xdrmem_create(&xdrs, buf + offset, arg_len, XDR_ENCODE);
-                if (((xdrproc_t)_xdr_argument)(&xdrs, (char *)&argument)) {
-                    msg_entry_t ety = {0};
-                    ety.data.buf = buf;
-                    ety.data.len = offset + arg_len;
-                    ety.id = raft_get_current_idx(raft_srv) + 1;
-                    ety.type = RAFT_LOGTYPE_NORMAL;
-
-                    msg_entry_response_t resp;
-                    if (0 == raft_recv_entry(raft_srv, &ety, &resp)) {
-                        while (raft_get_commit_idx(raft_srv) < resp.idx) {
-                            sleep(mytimout / 1000);
-                            raft_periodic(raft_srv, mytimout);
-                            raft_net_receive();
-                        }
-                    }
-                }
-                xdr_destroy(&xdrs);
-                free(buf);
-            }
-        }
-    }
+    raft_serialize_and_replicate_nfs_op(rqstp, remote_addr, _xdr_argument, &argument);
 
     result = (*local)((char *)&argument, rqstp);
 
@@ -1711,7 +1558,7 @@ static void unfs3_svc_run(void)
 
         int am_leader = raft_is_leader(raft_srv);
         if (am_leader && !was_leader) {
-            logmsg(LOG_INFO, "Leadership acquired, re-registering services");
+            logmsg(LOG_INFO, "Leadership acquired, registering services");
             become_leader();
         }
         was_leader = am_leader;
@@ -1752,7 +1599,7 @@ static void unfs3_svc_run(void)
             default:
                 svc_getreqset(&readfds);
                 
-        raft_periodic(raft_srv, 100);
+        raft_periodic(raft_srv, mytimout);
         raft_net_receive();
 
         int am_leader_sel = raft_is_leader(raft_srv);

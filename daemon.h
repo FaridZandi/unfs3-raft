@@ -24,8 +24,8 @@
 void daemon_exit(int);
 void logmsg(int, const char *, ...);
 
-const char *nfs3_proc_name(u_long proc);
-void print_buffer_hex(const void *buf, size_t len, const char *label);
+
+#define mytimout 1000 /* 1 second timeout for svc_getreqset() */
 
 /* remote address */
 int get_remote(struct svc_req *, struct in6_addr *);
