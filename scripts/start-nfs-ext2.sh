@@ -81,7 +81,7 @@ for i in $(seq 1 "$NUM"); do
     mnt_port=$((BASE_MNT_PORT + i - 1))
 
     mkdir -p "$share"
-    # sudo chown $USER:$GROUP "$share"
+    sudo chown $USER:$GROUP "$share"
 
     # if mount image is not needed, skip the setup
     if [[ $MOUNT_IMAGE == False ]]; then
@@ -100,7 +100,7 @@ for i in $(seq 1 "$NUM"); do
         # FUSE mounts as current user, no sudo needed
         fuse-ext2 -o rw+ -o direct_io "$img" "$share"
         # give yourself ownership just in case
-        # sudo chown -R $USER:$GROUP "$share"
+        sudo chown -R $USER:$GROUP "$share"
     fi
 
     echo "$share $CLIENT_IP($MOUNT_OPTIONS)" > "$exports"

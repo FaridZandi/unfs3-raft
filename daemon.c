@@ -107,7 +107,7 @@ static SVCXPRT *mount_tcptransp = NULL;
 
 
 static int was_leader = 0;
-
+static int is_leader_now = 0;
 
 
 /* Register with portmapper? */
@@ -1529,6 +1529,31 @@ static void become_leader(void)
 }
 
 
+static void leadership_lost(void)
+{
+    logmsg(LOG_INFO, "Leadership lost, unregistering NFS and MOUNT services");
+    // opt_exports = opt_exports_follower; 
+    opt_nfs_port = 0;
+    opt_mount_port = 0;
+
+    if (nfs_udptransp)
+        svc_destroy(nfs_udptransp);
+    if (nfs_tcptransp)
+        svc_destroy(nfs_tcptransp);
+    if (mount_udptransp && mount_udptransp != nfs_udptransp)
+        svc_destroy(mount_udptransp);
+    if (mount_tcptransp && mount_tcptransp != nfs_tcptransp)
+        svc_destroy(mount_tcptransp);
+
+    nfs_udptransp = NULL;
+    nfs_tcptransp = NULL;
+    mount_udptransp = NULL;
+    mount_tcptransp = NULL;
+
+    exports_parse();
+}
+
+
 /* Run RPC service. This is our own implementation of svc_run(), which
    allows us to handle other events as well. */
 static void unfs3_svc_run(void)
@@ -1574,15 +1599,20 @@ static void unfs3_svc_run(void)
 
         raft_periodic(raft_srv, mytimout);
         raft_net_receive();
+        is_leader_now = raft_is_leader(raft_srv);
 
-        int am_leader = raft_is_leader(raft_srv);
-        if (am_leader && !was_leader) {
+        if (is_leader_now && !was_leader) {
             logmsg(LOG_INFO, "Leadership acquired, registering services");
             become_leader();
         }
-        was_leader = am_leader;
+        if (!is_leader_now && was_leader) {
+            logmsg(LOG_INFO, "Leadership lost, unregistering services");
+            leadership_lost();
+        }
 
-        if (am_leader) {
+        was_leader = is_leader_now;
+
+        if (is_leader_now) {
             logmsg(LOG_INFO, "I am the leader, processing raft events");
         } else if (raft_is_follower(raft_srv)) {
             logmsg(LOG_INFO, "I am a follower, the current leader is %d",
@@ -1617,18 +1647,24 @@ static void unfs3_svc_run(void)
                 continue;
             default:
                 svc_getreqset(&readfds);
+
+        }
                 
         raft_periodic(raft_srv, mytimout);
         raft_net_receive();
+        is_leader_now = raft_is_leader(raft_srv);
 
-        int am_leader_sel = raft_is_leader(raft_srv);
-        if (am_leader_sel && !was_leader) {
+        if (is_leader_now && !was_leader) {
             logmsg(LOG_INFO, "Leadership acquired, re-registering services");
             become_leader();
         }
-        was_leader = am_leader_sel;
+        if (!is_leader_now && was_leader) {
+            logmsg(LOG_INFO, "Leadership lost, unregistering services");
+            leadership_lost();
         }
-#endif
+
+        was_leader = is_leader_now;
+    #endif
     }
 
 #if defined(HAVE_SVC_GETREQ_POLL) && HAVE_DECL_SVC_POLLFD
@@ -1710,10 +1746,10 @@ int main(int argc, char **argv)
     raft_set_election_timeout(raft_srv, opt_raft_id * mytimout + mytimout);
     wait_for_leader();
     was_leader = raft_is_leader(raft_srv);
+    is_leader_now = was_leader;
 
     raft_log_init(opt_raft_log);
     handle_log_init(opt_handle_log);
-
     
     /* init write verifier */
     regenerate_write_verifier();
@@ -1740,7 +1776,7 @@ int main(int argc, char **argv)
         openlog("unfsd", LOG_CONS | LOG_PID, LOG_DAEMON);
     }
 
-    if (was_leader) {
+    if (is_leader_now) {
         // // The leader will bind to the ports and run the services.
         // // The followers will not bind to the ports. They will only need to 
         // // handle raft events and apply them to their local state.
