@@ -35,6 +35,8 @@
 #include "password.h"
 #include "backend.h"
 
+#include "daemon_raft.h"
+
 #ifndef PATH_MAX
 # define PATH_MAX	4096
 #endif
@@ -156,6 +158,22 @@ void *mountproc_null_3_svc(U(void *argp), U(struct svc_req *rqstp))
     return &result;
 }
 
+
+static const char *map_logical(const char *dpath) {
+    static char mapped[PATH_MAX];
+
+    logmsg(LOG_DEBUG, "map_logical: dpath=%s", dpath);
+
+    /* If client asked for the logical name, rewrite it */
+    if (strcmp(dpath, logical_mount_root) == 0) {
+        snprintf(mapped, sizeof(mapped), my_mount_root);  /* .../shared1 */  
+        logmsg(LOG_DEBUG, "map_logical: mapped to %s", mapped);
+        return mapped;
+    }
+
+    return dpath;
+}
+
 mountres3 *mountproc_mnt_3_svc(dirpath * argp, struct svc_req * rqstp)
 {
     char buf[PATH_MAX];
@@ -171,6 +189,8 @@ mountres3 *mountproc_mnt_3_svc(dirpath * argp, struct svc_req * rqstp)
 
     /* We need to modify the *argp pointer. Make a copy. */
     char *dpath = *argp;
+
+    dpath = map_logical(dpath);  // Map logical path if needed
 
     /* error out if not version 3 */
     if (rqstp->rq_vers != 3) {
@@ -241,8 +261,9 @@ mountres3 *mountproc_mnt_3_svc(dirpath * argp, struct svc_req * rqstp)
         return &result;
     }
 
-    if ((exports_options(buf, rqstp, &password, NULL) == -1)
-        || (!authenticated && password[0])
+    if (
+        (exports_options(buf, rqstp, &password, NULL) == -1) || 
+        (!authenticated && password[0])
         || (!(exports_opts & OPT_INSECURE) &&
             !IS_SECURE(ntohs(get_port(rqstp))))
        ) {

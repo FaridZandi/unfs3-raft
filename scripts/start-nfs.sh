@@ -64,19 +64,10 @@ peer_list () {
 }
 
 for i in $(seq 0 "$NUM"); do
-    if [[ $i -eq 0 ]]; then
-        echo "special case: leader stuff." 
-        instdir=$WORKDIR/global
-    else
-        echo "starting instance $i"
-        instdir=$WORKDIR/inst$i
-    fi      
-
-    if [[ $i -eq 0 ]]; then
-        share="$MOUNT_BASE/shared"
-    else
-        share="$MOUNT_BASE/shared$i"
-    fi  
+    echo "starting instance $i"
+    instdir=$WORKDIR/inst$i
+    logicalshare="$MOUNT_BASE/shared"
+    share="$MOUNT_BASE/shared$i"
 
     mkdir -p "$instdir"
 
@@ -140,6 +131,8 @@ for i in $(seq 0 "$NUM"); do
             -R "$raft" # all raft logs will permanently be here
             -I "$node_id" # node ID for RAFT. unique per instance
             -P "$peers" # peer list for RAFT (comma-separated IDs of other nodes)
+            -G "$logicalshare" # logical mount root for this instance
+            -g "$share" # mount root for this instance
         )
 
         if [[ $USE_GDB -eq 1 ]]; then

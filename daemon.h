@@ -49,5 +49,7 @@ extern int	opt_singleuser;
 extern int	opt_brute_force;
 extern int	opt_readable_executables;
 extern int      opt_32_bit_truncate;
+extern char* my_mount_root; 
+extern char* logical_mount_root;
 
 #endif

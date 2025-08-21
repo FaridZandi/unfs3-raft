@@ -22,6 +22,7 @@ typedef struct raft_client_info {
 void raft_init(void);
 void raft_net_receive(void);
 
+void adjust_handles_for_proc(u_long proc, void *argp); 
 
 // some helper functions for debugging
 const char *nfs3_proc_name(u_long proc); 

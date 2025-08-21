@@ -63,20 +63,11 @@ peer_list () {
     echo "${list%,}"
 }
 
-for i in $(seq 0 "$NUM"); do
-    if [[ $i -eq 0 ]]; then
-        echo "special case: leader stuff." 
-        instdir=$WORKDIR/global
-    else
-        echo "starting instance $i"
-        instdir=$WORKDIR/inst$i
-    fi      
-
-    if [[ $i -eq 0 ]]; then
-        share="$MOUNT_BASE/shared"
-    else
-        share="$MOUNT_BASE/shared$i"
-    fi  
+for i in $(seq 1 "$NUM"); do
+    echo "starting instance $i"
+    instdir=$WORKDIR/inst$i
+    logicalshare="$MOUNT_BASE/shared"
+    share="$MOUNT_BASE/shared$i"
 
     mkdir -p "$instdir"
 
@@ -90,7 +81,7 @@ for i in $(seq 0 "$NUM"); do
     mnt_port=$((BASE_MNT_PORT + i - 1))
 
     mkdir -p "$share"
-    sudo chown $USER:$GROUP "$share"
+    # sudo chown $USER:$GROUP "$share"
 
     # if mount image is not needed, skip the setup
     if [[ $MOUNT_IMAGE == False ]]; then
@@ -109,7 +100,7 @@ for i in $(seq 0 "$NUM"); do
         # FUSE mounts as current user, no sudo needed
         fuse-ext2 -o rw+ -o direct_io "$img" "$share"
         # give yourself ownership just in case
-        sudo chown -R $USER:$GROUP "$share"
+        # sudo chown -R $USER:$GROUP "$share"
     fi
 
     echo "$share $CLIENT_IP($MOUNT_OPTIONS)" > "$exports"
@@ -140,6 +131,9 @@ for i in $(seq 0 "$NUM"); do
             -R "$raft" # all raft logs will permanently be here
             -I "$node_id" # node ID for RAFT. unique per instance
             -P "$peers" # peer list for RAFT (comma-separated IDs of other nodes)
+            -g "$MOUNT_BASE" # mount root for this instance
+            -G "$logicalshare" # logical mount root for this instance
+            -g "$share" # mount root for this instance
         )
 
         if [[ $USE_GDB -eq 1 ]]; then

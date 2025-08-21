@@ -94,6 +94,9 @@ char *opt_pid_file = NULL;
 int opt_32_bit_truncate = FALSE;
 char *opt_handle_log = "handle.log";
 
+char *my_mount_root = NULL; // Mount root for this instance
+char *logical_mount_root = NULL; // Logical mount root for this instance
+
 /* Global RPC transport handles so we can re-register services */
 // these are probably not needed anymore. TODO: remove
 static SVCXPRT *nfs_udptransp = NULL;
@@ -273,7 +276,7 @@ static void remove_pid_file(void)
 static void parse_options(int argc, char **argv)
 {
     int opt = 0;
-    char *optstring = "3bcC:de:E:hl:m:n:prstTuwi:R:H:I:P:";
+    char *optstring = "3bcC:de:E:hl:m:n:prstTuwi:R:H:I:P:g:G:";
 
 #if defined(WIN32) || defined(AFS_SUPPORT)
     /* Allways truncate to 32 bits in these cases */
@@ -354,6 +357,13 @@ static void parse_options(int argc, char **argv)
                 printf("\t-H <file>   path to handle log\n");
                 printf("\t-I <id>     raft node id\n");
                 printf("\t-P <ids>    comma separated raft peer ids\n");
+                // defined these in daemon.h
+                // extern char* my_mount_root; 
+                // extern char* logical_mount_root;
+                // now adding the command line options
+                printf("\t-g <path>   this replica mount root path \n");
+                printf("\t-G <path>   logical mount root path \n");
+
                 exit(0);
                 break;
             case 'l':
@@ -426,6 +436,12 @@ static void parse_options(int argc, char **argv)
                 break;
             case 'P':
                 opt_raft_peers = optarg;
+                break;
+            case 'g':
+                my_mount_root = optarg;
+                break;  
+            case 'G':
+                logical_mount_root = optarg; 
                 break;
             case '?':
                 exit(1);
@@ -856,8 +872,11 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
     // preprocess_handles(rqstp->rq_proc, &argument, rqstp);
     
     /* Serialize and replicate the operation using Raft */
+
     raft_serialize_and_replicate_nfs_op(rqstp, remote_addr, _xdr_argument, &argument);
 
+    adjust_handles_for_proc(rqstp->rq_proc, &argument);
+    
     result = (*local)((char *)&argument, rqstp);
 
 
@@ -1470,7 +1489,7 @@ static SVCXPRT *create_tcp_transport(unsigned int port)
 /* Take over NFS and MOUNT services when this node becomes leader */
 static void become_leader(void)
 {
-    opt_exports = opt_exports_leader; 
+    // opt_exports = opt_exports_leader; 
     opt_nfs_port = NFS_PORT;
     opt_mount_port = NFS_PORT; 
 

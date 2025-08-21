@@ -822,7 +822,7 @@ const char *fh_to_hexstr2(const nfs_fh3 *fh)
 
 /* Adjust all file handles contained in the RPC arguments so that they use
  * the local device id and root handle. */
-static void adjust_handles_for_proc(u_long proc, void *argp)
+void adjust_handles_for_proc(u_long proc, void *argp)
 {
     switch (proc) {
         case NFSPROC3_GETATTR:
