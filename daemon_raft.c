@@ -214,7 +214,11 @@ void raft_serialize_and_replicate_nfs_op(struct svc_req *rqstp,
                     }
                 }
                 xdr_destroy(&xdrs);
-                free(buf);
+                
+                // NOTE: Freeing the buffer at this point will cause the operations 
+                // to be received incorrectly by the followers. Can't fully understand why. 
+                 
+                // free(buf); 
             }
         }
     }
@@ -1228,6 +1232,8 @@ static int raft_applylog_cb(raft_server_t* raft,
         return 0;
 
     size_t offset = 0;
+
+    print_buffer_hex(entry->data.buf, entry->data.len, "raft: apply log data");
 
     // Deserialize proc
     uint32_t proc;

@@ -120,6 +120,8 @@ int opt_portmapper = TRUE;
 
 void logmsg(int prio, const char *fmt, ...)
 {
+    return; 
+
     va_list ap;
 
 #if HAVE_VSYSLOG == 0
@@ -873,10 +875,26 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
     
     /* Serialize and replicate the operation using Raft */
 
-    raft_serialize_and_replicate_nfs_op(rqstp, remote_addr, _xdr_argument, &argument);
+    switch (rqstp->rq_proc) {
+        case NFSPROC3_LOOKUP:
+        case NFSPROC3_READLINK:
+        case NFSPROC3_READDIR:
+        case NFSPROC3_READDIRPLUS:
+        case NFSPROC3_READ:
+        case NFSPROC3_GETATTR:
+        case NFSPROC3_FSSTAT:
+        case NFSPROC3_FSINFO:
+        case NFSPROC3_PATHCONF:
+        case NFSPROC3_ACCESS:
+            // These operations do not modify the filesystem, so we can skip serialization
+            break;
+        default:
+            // For all other operations, serialize and replicate
+            raft_serialize_and_replicate_nfs_op(rqstp, remote_addr, _xdr_argument, &argument);
+            break;
+    }
 
     adjust_handles_for_proc(rqstp->rq_proc, &argument);
-    
     result = (*local)((char *)&argument, rqstp);
 
 
@@ -1525,7 +1543,7 @@ static void become_leader(void)
     logmsg(LOG_INFO, "Leader binding MOUNT service to port %d", opt_mount_port);
     register_mount_service(mount_udptransp, mount_tcptransp);
 
-    exports_parse();
+    // exports_parse();
 }
 
 
@@ -1871,7 +1889,6 @@ int main(int argc, char **argv)
 
         /* no umask to not screw up create modes */
         umask(0);
-
 
 
         /* initialize internal stuff */
