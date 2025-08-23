@@ -1525,9 +1525,6 @@ static void become_leader(void)
 {
     logmsg(LOG_CRIT, "Leadership acquired, registering NFS and MOUNT services");
 
-    opt_nfs_port = NFS_PORT;
-    opt_mount_port = NFS_PORT; 
-
     if (nfs_udptransp)
         svc_destroy(nfs_udptransp);
     if (nfs_tcptransp)
@@ -1566,10 +1563,7 @@ static void become_leader(void)
 
 static void leadership_lost(void)
 {
-    logmsg(LOG_INFO, "Leadership lost, unregistering NFS and MOUNT services");
-    // opt_exports = opt_exports_follower; 
-    opt_nfs_port = 0;
-    opt_mount_port = 0;
+    logmsg(LOG_CRIT, "Leadership lost, unregistering NFS and MOUNT services");
 
     if (nfs_udptransp)
         svc_destroy(nfs_udptransp);
@@ -1647,10 +1641,10 @@ static void unfs3_svc_run(void)
             leadership_lost();
         }
 
-        if (is_leader_now && raft_disabled) {
-            logmsg(LOG_CRIT, "Raft disabled, stepping down from leadership");
-            raft_become_follower(raft_srv);
-        }
+        // if (is_leader_now && raft_disabled) {
+        //     logmsg(LOG_CRIT, "Raft disabled, stepping down from leadership");
+        //     raft_become_follower(raft_srv);
+        // }
 
         was_leader = is_leader_now;
 

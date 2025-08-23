@@ -18,9 +18,6 @@ set -euo pipefail
 NUM=${1:-3}                  # how many daemons
 SIZE=${2:-1024}              # size of each image (MiB)
 
-BASE_NFS_PORT=2050           # NFS   port for instance 1
-BASE_MNT_PORT=2050           # mount port for instance 1 (avoid <1024)
-
 WORKDIR=$(pwd)               # where the script is run
 MOUNT_BASE=~/srv/nfs          # parent for visible shares
 GLOBAL_PIDLIST=$WORKDIR/unfsd_all.pids
@@ -40,7 +37,7 @@ make
 sudo make install
 cd "$WORKDIR"
 
-USE_GDB=1
+USE_GDB=0
 
 USER=`id -un`  # user who ran the script
 GROUP=`id -gn $USER`  # group of the user who ran the script
@@ -77,8 +74,8 @@ for i in $(seq 0 "$NUM"); do
     raft=$instdir/raft.log
     pidfile=$instdir/unfsd.pid
 
-    nfs_port=$((BASE_NFS_PORT + i - 1))
-    mnt_port=$((BASE_MNT_PORT + i - 1))
+    nfs_port=2049 # $((2050 + i - 1))
+    mnt_port=2049 # $((2050 + i - 1))
 
     mkdir -p "$share"
     sudo chown $USER:$GROUP "$share"
@@ -125,8 +122,8 @@ for i in $(seq 0 "$NUM"); do
             -e "$exports" # exports file if normal instance
             -E "$WORKDIR/global/exports"  # exports file for leader
             -i "$pidfile" # pid file to help stop the instance later 
-            -n "$nfs_port" # NFS port used if normal instance
-            -m "$mnt_port" # mount port used if normal instance
+            -n "$nfs_port" # NFS port
+            -m "$mnt_port" # mount port
             -H "$handle" # all the handles generated logged here
             -R "$raft" # all raft logs will permanently be here
             -I "$node_id" # node ID for RAFT. unique per instance
