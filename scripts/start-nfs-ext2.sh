@@ -40,7 +40,7 @@ make
 sudo make install
 cd "$WORKDIR"
 
-USE_GDB=1
+USE_GDB=0
 
 USER=`id -un`  # user who ran the script
 GROUP=`id -gn $USER`  # group of the user who ran the script

@@ -25,7 +25,7 @@ void daemon_exit(int);
 void logmsg(int, const char *, ...);
 
 
-#define mytimout 100.0 /* 1 second timeout for svc_getreqset() */
+#define mytimout 1000.0 /* 1 second timeout for svc_getreqset() */
 
 /* remote address */
 int get_remote(struct svc_req *, struct in6_addr *);
@@ -51,5 +51,7 @@ extern int	opt_readable_executables;
 extern int      opt_32_bit_truncate;
 extern char* my_mount_root; 
 extern char* logical_mount_root;
+
+extern volatile sig_atomic_t raft_disabled;
 
 #endif

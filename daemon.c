@@ -104,11 +104,10 @@ static SVCXPRT *nfs_tcptransp = NULL;
 static SVCXPRT *mount_udptransp = NULL;
 static SVCXPRT *mount_tcptransp = NULL;
 
-
-
 static int was_leader = 0;
 static int is_leader_now = 0;
 
+volatile sig_atomic_t raft_disabled = 0;
 
 /* Register with portmapper? */
 int opt_portmapper = TRUE;
@@ -117,10 +116,9 @@ int opt_portmapper = TRUE;
 
 
 
-
 void logmsg(int prio, const char *fmt, ...)
 {
-    return; 
+    // return; 
 
     va_list ap;
 
@@ -137,8 +135,10 @@ void logmsg(int prio, const char *fmt, ...)
         syslog(prio, mesg, 1024);
 #endif
     } else {
-        vprintf(fmt, ap);
-        putchar('\n');
+        if (prio <= 1000) {
+            vprintf(fmt, ap);
+            putchar('\n');
+        }
     }
     va_end(ap);
 }
@@ -1400,11 +1400,21 @@ static SVCXPRT *create_udp_transport(unsigned int port)
     }
 
     setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (void*)&on, sizeof(on));
-    if (bind(sock, sin, sin_len)) {
-        perror("bind");
-        fprintf(stderr, "Couldn't bind to udp port %d\n", port);
-        exit(1);
+
+    int bind_attempts = 0;
+
+    /////////////////////////////////////////////////
+    while (bind(sock, sin, sin_len)) {
+        if (++bind_attempts >= 100) {
+            perror("bind");
+            fprintf(stderr, "Couldn't bind to udp port %d after 100 attempts\n", port);
+            exit(1);
+        }
+        logmsg(LOG_WARNING, "Bind to udp port %d failed, retrying (%d/100)", port, bind_attempts);
+        usleep(100000); // 0.1 seconds
     }
+    /////////////////////////////////////////////////
+
 
     transp = svc_dg_create(sock, 0, 0);
 
@@ -1482,10 +1492,16 @@ static SVCXPRT *create_tcp_transport(unsigned int port)
     }
 
     setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (void*)&on, sizeof(on));
-    if (bind(sock, sin, sin_len)) {
-        perror("bind");
-        fprintf(stderr, "Couldn't bind to tcp port %d\n", port);
-        exit(1);
+
+    int bind_attempts = 0;
+    while (bind(sock, sin, sin_len)) {
+        if (++bind_attempts >= 100) {
+            perror("bind");
+            fprintf(stderr, "Couldn't bind to tcp port %d after 100 attempts\n", port);
+            exit(1);
+        }
+        logmsg(LOG_WARNING, "Bind to tcp port %d failed, retrying (%d/100)", port, bind_attempts);
+        usleep(100000); // 0.1 seconds
     }
 
     if (listen(sock, SOMAXCONN)) {
@@ -1507,7 +1523,8 @@ static SVCXPRT *create_tcp_transport(unsigned int port)
 /* Take over NFS and MOUNT services when this node becomes leader */
 static void become_leader(void)
 {
-    // opt_exports = opt_exports_leader; 
+    logmsg(LOG_CRIT, "Leadership acquired, registering NFS and MOUNT services");
+
     opt_nfs_port = NFS_PORT;
     opt_mount_port = NFS_PORT; 
 
@@ -1614,18 +1631,25 @@ static void unfs3_svc_run(void)
         } else if (r)
             svc_getreq_poll(pollfds, r);
 
-
         raft_periodic(raft_srv, mytimout);
-        raft_net_receive();
+        if(!raft_disabled) {
+            raft_net_receive();            
+        }
         is_leader_now = raft_is_leader(raft_srv);
-
+        
         if (is_leader_now && !was_leader) {
-            logmsg(LOG_INFO, "Leadership acquired, registering services");
+            logmsg(LOG_CRIT, "Leadership acquired, registering services");
             become_leader();
         }
-        if (!is_leader_now && was_leader) {
-            logmsg(LOG_INFO, "Leadership lost, unregistering services");
+
+        if ((!is_leader_now && was_leader) ) {
+            logmsg(LOG_CRIT, "Leadership lost, unregistering services");
             leadership_lost();
+        }
+
+        if (is_leader_now && raft_disabled) {
+            logmsg(LOG_CRIT, "Raft disabled, stepping down from leadership");
+            raft_become_follower(raft_srv);
         }
 
         was_leader = is_leader_now;
@@ -1634,7 +1658,7 @@ static void unfs3_svc_run(void)
             logmsg(LOG_INFO, "I am the leader, processing raft events");
         } else if (raft_is_follower(raft_srv)) {
             logmsg(LOG_INFO, "I am a follower, the current leader is %d",
-                   raft_get_current_leader(raft_srv));
+                raft_get_current_leader(raft_srv));
         } else {
             logmsg(LOG_INFO, "I am a candidate, waiting for votes");
             int voted_for = raft_get_voted_for(raft_srv);
@@ -1643,6 +1667,8 @@ static void unfs3_svc_run(void)
             else
                 logmsg(LOG_INFO, "I have not voted yet");
         }
+
+        
 
 #else
         readfds = svc_fdset;
@@ -1665,23 +1691,29 @@ static void unfs3_svc_run(void)
                 continue;
             default:
                 svc_getreqset(&readfds);
-
         }
-                
+        
         raft_periodic(raft_srv, mytimout);
-        raft_net_receive();
-        is_leader_now = raft_is_leader(raft_srv);
 
-        if (is_leader_now && !was_leader) {
-            logmsg(LOG_INFO, "Leadership acquired, re-registering services");
-            become_leader();
-        }
-        if (!is_leader_now && was_leader) {
-            logmsg(LOG_INFO, "Leadership lost, unregistering services");
-            leadership_lost();
-        }
+        if(!raft_disabled) {
+            raft_net_receive();
+            is_leader_now = raft_is_leader(raft_srv);
 
-        was_leader = is_leader_now;
+            if (is_leader_now && !was_leader) {
+                logmsg(LOG_CRIT, "Leadership acquired, re-registering services");
+                become_leader();
+            }
+            if (!is_leader_now && was_leader) {
+                logmsg(LOG_CRIT, "Leadership lost, unregistering services");
+                leadership_lost();
+            }
+            if (is_leader_now && raft_disabled) {
+                logmsg(LOG_CRIT, "Raft disabled, stepping down from leadership");
+                raft_become_follower(raft_srv);
+            }
+
+            was_leader = is_leader_now;
+        }
     #endif
     }
 
@@ -1716,6 +1748,37 @@ void change_readdir_cookie(void)
         rcookie = rcookie << 32;
     }
 }
+
+
+
+static void disable_raft(int signo) {
+    (void)signo;
+    raft_disabled = 1;
+    // async-signal-safe write to prove we got here
+    const char msg[] = "SIGUSR2: raft disabled\n";
+    write(STDOUT_FILENO, msg, sizeof msg - 1);
+}
+
+static void enable_raft(int signo) {
+    (void)signo;
+    raft_disabled = 0;
+    const char msg[] = "SIGUSR1: raft enabled\n";
+    write(STDOUT_FILENO, msg, sizeof msg - 1);
+}
+
+static void install_handler(int sig, void (*handler)(int)) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sigemptyset(&sa.sa_mask);
+    sa.sa_handler = handler;
+    sa.sa_flags = SA_RESTART;   // usually helpful; not required
+    if (sigaction(sig, &sa, NULL) == -1) {
+        perror("sigaction");
+        _exit(2);
+    }
+    logmsg(LOG_INFO, "Installed handler for signal %d", sig);
+}
+
 
 /*
  * NFSD main function
@@ -1856,6 +1919,11 @@ int main(int argc, char **argv)
 
     if (!opt_detach || pid == 0) {
 #ifndef WIN32
+
+        logmsg(LOG_INFO, "unfsd starting%s",
+               opt_detach ? " in background" : "");
+
+               
         sigemptyset(&actset);
         act.sa_handler = daemon_exit;
         act.sa_mask = actset;
@@ -1865,12 +1933,15 @@ int main(int argc, char **argv)
         sigaction(SIGINT, &act, NULL);
         sigaction(SIGQUIT, &act, NULL);
         sigaction(SIGSEGV, &act, NULL);
-        sigaction(SIGUSR1, &act, NULL);
+        // sigaction(SIGUSR1, &act, NULL); // used to enable raft
 
         act.sa_handler = SIG_IGN;
         sigaction(SIGPIPE, &act, NULL);
-        sigaction(SIGUSR2, &act, NULL);
+        // sigaction(SIGUSR2, &act, NULL); // used to disable raft
         sigaction(SIGALRM, &act, NULL);
+
+        install_handler(SIGUSR1, enable_raft);
+        install_handler(SIGUSR2, disable_raft);
 
         /* don't make directory we started in busy */
         if(chdir("/") < 0) {

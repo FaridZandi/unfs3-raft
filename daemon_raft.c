@@ -599,6 +599,7 @@ void raft_net_receive(void) {
 
         uint8_t type = buf[0];
         char* ptr = buf + 1;
+
         switch (type) {
             case 1:
                 handle_requestvote(peer, ptr, &src, slen);
@@ -1100,6 +1101,9 @@ static void apply_nfs_operation(uint32_t proc, raft_client_info_t *info, char* b
 
 
 static int raft_send_requestvote_cb(raft_server_t* raft, void* udata, raft_node_t* node, msg_requestvote_t* msg) {
+    if (raft_disabled)
+        return -1;
+
     struct raft_peer *peer = raft_node_get_udata(node);
     if (!peer)
         return -1;
@@ -1127,6 +1131,8 @@ static int raft_send_appendentries_cb(raft_server_t* raft,
                                       void* udata, 
                                       raft_node_t* node, 
                                       msg_appendentries_t* msg) {
+    if (raft_disabled)
+        return -1;
 
     struct raft_peer *peer = raft_node_get_udata(node);
     if (!peer)
@@ -1265,9 +1271,6 @@ static int raft_applylog_cb(raft_server_t* raft,
 
 
 
-
-
-
 void raft_init(void) {
     raft_srv = raft_new();
     raft_cbs.send_requestvote = raft_send_requestvote_cb;
@@ -1278,6 +1281,7 @@ void raft_init(void) {
     raft_cbs.log_poll = raft_log_poll_cb;
     raft_cbs.log_pop = raft_log_pop_cb;
     raft_cbs.applylog = raft_applylog_cb;
+
     raft_set_callbacks(raft_srv, &raft_cbs, NULL);
 
     raft_sock = socket(AF_INET, SOCK_DGRAM, 0);
