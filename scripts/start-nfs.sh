@@ -136,6 +136,9 @@ for i in $(seq 0 "$NUM"); do
             echo "[*] inst$i: running under gdb and run"
             gdb -ex run -ex "bt" --args unfsd "${cmd_args[@]}" > "$instdir/unfsd.out" 2>&1 &
         else
+            echo "running the command:"
+            echo "  unfsd ${cmd_args[*]} > $instdir/unfsd.out 2>&1 &"
+
             unfsd "${cmd_args[@]}" > "$instdir/unfsd.out" 2>&1 &
         fi
 

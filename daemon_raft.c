@@ -103,7 +103,10 @@ const char *mountproc_name(u_long proc)
 // Prints the contents of 'buf' as hex, 'len' bytes, with 'bytes_per_line' bytes per line.
 void print_buffer_hex(const void *buf, size_t len, const char *label)
 {
-    const int bytes_per_line = 16; // Change this to adjust how many bytes per line 
+    return;
+
+
+    const int bytes_per_line = 16; // Change this to adjust how many bytes per line
 
     const unsigned char *p = (const unsigned char *)buf;
     if (label)
@@ -142,7 +145,7 @@ void wait_for_leader(void)
     while (raft_get_current_leader(raft_srv) == -1) {
         raft_periodic(raft_srv, mytimout);
         raft_net_receive();
-        usleep(mytimout * 1000); // Sleep for 1 second
+        usleep(mytimout * 1000); 
     }
 
     int leader = raft_get_current_leader(raft_srv);
@@ -153,6 +156,23 @@ void wait_for_leader(void)
     } else {
         logmsg(LOG_INFO, "This node is a follower; waiting for leader to send requests");
     } 
+}
+
+void print_leader_info(void){
+    if (raft_is_leader(raft_srv)) {
+        logmsg(LOG_INFO, "I am the leader, processing raft events");
+    } else if (raft_is_follower(raft_srv)) {
+        logmsg(LOG_INFO, "I am a follower, the current leader is %d",
+            raft_get_current_leader(raft_srv));
+    } else {
+        logmsg(LOG_INFO, "I am a candidate, waiting for votes");
+        int voted_for = raft_get_voted_for(raft_srv);
+
+        if (voted_for != -1)
+            logmsg(LOG_INFO, "I voted for %d", voted_for);
+        else
+            logmsg(LOG_INFO, "I have not voted yet");
+    }
 }
 
 
@@ -1261,6 +1281,9 @@ static int raft_applylog_cb(raft_server_t* raft,
            (unsigned long)entry_idx, nfs3_proc_name(proc),
            info.uid, info.gid, info.gid_len,
            entry->data.len - offset);
+
+    logmsg(LOG_CRIT, "raft: applying log idx %lu proc %s",
+           (unsigned long)entry_idx, nfs3_proc_name(proc));
 
     apply_nfs_operation(proc,
                         &info,
