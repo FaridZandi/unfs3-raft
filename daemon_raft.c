@@ -176,11 +176,15 @@ void print_leader_info(void){
 }
 
 
-void raft_serialize_and_replicate_nfs_op(struct svc_req *rqstp, 
+int raft_serialize_and_replicate_nfs_op(struct svc_req *rqstp, 
                                          struct in6_addr remote_addr, 
                                          xdrproc_t _xdr_argument, 
                                          void *argument) {
     if (raft_is_leader(raft_srv)) {
+        // flush any pending logs
+        raft_apply_all(raft_srv);
+
+
         u_int arg_len = xdr_sizeof(_xdr_argument, (char *)argument);
         if (arg_len > 0) {
             size_t info_size = sizeof(raft_client_info_t);
@@ -213,6 +217,7 @@ void raft_serialize_and_replicate_nfs_op(struct svc_req *rqstp,
                     return;
                 }
 
+
                 offset += info_size;
 
                 XDR xdrs;
@@ -226,7 +231,13 @@ void raft_serialize_and_replicate_nfs_op(struct svc_req *rqstp,
 
                     msg_entry_response_t resp;
                     if (0 == raft_recv_entry(raft_srv, &ety, &resp)) {
+                        logmsg(LOG_CRIT, "Logged operation %s as log idx %ld",
+                               nfs3_proc_name(rqstp->rq_proc), resp.idx);
+                        
                         while (raft_get_commit_idx(raft_srv) < resp.idx) {
+                            if (raft_disabled){
+                                return 1; 
+                            }
                             sleep(mytimout / 1000);
                             raft_periodic(raft_srv, mytimout);
                             raft_net_receive();
@@ -241,6 +252,11 @@ void raft_serialize_and_replicate_nfs_op(struct svc_req *rqstp,
                 // free(buf); 
             }
         }
+        raft_apply_all(raft_srv);
+    } else {
+        logmsg(LOG_CRIT, "Not the leader, cannot replicate operation %s",
+                nfs3_proc_name(rqstp->rq_proc));
+        return 1;
     }
 }
 
@@ -604,6 +620,9 @@ static void handle_appendentries_response(const struct raft_peer* peer,
 
 // Main dispatcher:
 void raft_net_receive(void) {
+    if (raft_disabled)
+        return;
+
     char buf[RAFT_MAX_PKT];
     struct sockaddr_in src;
     socklen_t slen = sizeof(src);
@@ -718,6 +737,7 @@ static void handle_appendentries(const struct raft_peer* peer,
     logmsg(LOG_DEBUG, "raft: received appendentries from peerid=%d, term %ld, prev_log_idx %ld, prev_log_term %ld, leader_commit %ld, n_entries %d", 
                           peer->id, ae.term, ae.prev_log_idx, ae.prev_log_term, ae.leader_commit, ae.n_entries);
     raft_recv_appendentries(raft_srv, peer->node, &ae, &resp);
+    
     logmsg(LOG_DEBUG, "raft: appendentries response: term %ld, success %d, current_idx %ld, first_idx %ld", 
                           resp.term, resp.success, resp.current_idx, resp.first_idx);
 
@@ -952,112 +972,90 @@ static void apply_nfs_operation(uint32_t proc, raft_client_info_t *info, char* b
     
     switch (proc) {
         case NFSPROC3_NULL:
-            printf("apply_nfs_operation: NFSPROC3_NULL\n");
             xdr_argument = (xdrproc_t) xdr_void;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_null_3_svc;
             break;
         case NFSPROC3_GETATTR:
-            printf("apply_nfs_operation: NFSPROC3_GETATTR\n");
             xdr_argument = (xdrproc_t) xdr_GETATTR3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_getattr_3_svc;
             break;
         case NFSPROC3_SETATTR:
-            printf("apply_nfs_operation: NFSPROC3_SETATTR\n");
             xdr_argument = (xdrproc_t) xdr_SETATTR3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_setattr_3_svc;
             break;
         case NFSPROC3_LOOKUP:
-            printf("apply_nfs_operation: NFSPROC3_LOOKUP\n");
             xdr_argument = (xdrproc_t) xdr_LOOKUP3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_lookup_3_svc;
             break;
         case NFSPROC3_ACCESS:
-            printf("apply_nfs_operation: NFSPROC3_ACCESS\n");
             xdr_argument = (xdrproc_t) xdr_ACCESS3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_access_3_svc;
             break;
         case NFSPROC3_READLINK:
-            printf("apply_nfs_operation: NFSPROC3_READLINK\n");
             xdr_argument = (xdrproc_t) xdr_READLINK3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_readlink_3_svc;
             break;
         case NFSPROC3_READ:
-            printf("apply_nfs_operation: NFSPROC3_READ\n");
             xdr_argument = (xdrproc_t) xdr_READ3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_read_3_svc;
             break;
         case NFSPROC3_WRITE:
-            printf("apply_nfs_operation: NFSPROC3_WRITE\n");
             xdr_argument = (xdrproc_t) xdr_WRITE3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_write_3_svc;
             break;
         case NFSPROC3_CREATE:
-            printf("apply_nfs_operation: NFSPROC3_CREATE\n");
             xdr_argument = (xdrproc_t) xdr_CREATE3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_create_3_svc;
             break;
         case NFSPROC3_MKDIR:
-            printf("apply_nfs_operation: NFSPROC3_MKDIR\n");
             xdr_argument = (xdrproc_t) xdr_MKDIR3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_mkdir_3_svc;
             break;
         case NFSPROC3_SYMLINK:
-            printf("apply_nfs_operation: NFSPROC3_SYMLINK\n");
             xdr_argument = (xdrproc_t) xdr_SYMLINK3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_symlink_3_svc;
             break;
         case NFSPROC3_MKNOD:
-            printf("apply_nfs_operation: NFSPROC3_MKNOD\n");
             xdr_argument = (xdrproc_t) xdr_MKNOD3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_mknod_3_svc;
             break;
         case NFSPROC3_REMOVE:
-            printf("apply_nfs_operation: NFSPROC3_REMOVE\n");
             xdr_argument = (xdrproc_t) xdr_REMOVE3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_remove_3_svc;
             break;
         case NFSPROC3_RMDIR:
-            printf("apply_nfs_operation: NFSPROC3_RMDIR\n");
             xdr_argument = (xdrproc_t) xdr_RMDIR3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_rmdir_3_svc;
             break;
         case NFSPROC3_RENAME:
-            printf("apply_nfs_operation: NFSPROC3_RENAME\n");
             xdr_argument = (xdrproc_t) xdr_RENAME3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_rename_3_svc;
             break;
         case NFSPROC3_LINK:
-            printf("apply_nfs_operation: NFSPROC3_LINK\n");
             xdr_argument = (xdrproc_t) xdr_LINK3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_link_3_svc;
             break;
         case NFSPROC3_READDIR:
-            printf("apply_nfs_operation: NFSPROC3_READDIR\n");
             xdr_argument = (xdrproc_t) xdr_READDIR3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_readdir_3_svc;
             break;
         case NFSPROC3_READDIRPLUS:
-            printf("apply_nfs_operation: NFSPROC3_READDIRPLUS\n");
             xdr_argument = (xdrproc_t) xdr_READDIRPLUS3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_readdirplus_3_svc;
             break;
         case NFSPROC3_FSSTAT:
-            printf("apply_nfs_operation: NFSPROC3_FSSTAT\n");
             xdr_argument = (xdrproc_t) xdr_FSSTAT3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_fsstat_3_svc;
             break;
         case NFSPROC3_FSINFO:
-            printf("apply_nfs_operation: NFSPROC3_FSINFO\n");
             xdr_argument = (xdrproc_t) xdr_FSINFO3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_fsinfo_3_svc;
             break;
         case NFSPROC3_PATHCONF:
-            printf("apply_nfs_operation: NFSPROC3_PATHCONF\n");
             xdr_argument = (xdrproc_t) xdr_PATHCONF3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_pathconf_3_svc;
             break;
         case NFSPROC3_COMMIT:
-            printf("apply_nfs_operation: NFSPROC3_COMMIT\n");
             xdr_argument = (xdrproc_t) xdr_COMMIT3args;
             local = (char *(*)(char *, struct svc_req *)) nfsproc3_commit_3_svc;
             break;
@@ -1247,8 +1245,10 @@ static int raft_applylog_cb(raft_server_t* raft,
     logmsg(LOG_DEBUG, "raft: apply log callback called, idx %lu, term %llu",
            (unsigned long)entry_idx, (unsigned long long)entry->term);
 
-    if (raft_is_leader(raft_srv))
-        return 0;
+    // if (raft_is_leader(raft_srv)){
+        // logmsg(LOG_CRIT, "raft: skipping applylog on leader idx %lu", (unsigned long)entry_idx);
+        // return 0;
+    // }
 
     // Buffer must be large enough for proc and info header
     size_t proc_size = sizeof(uint32_t);
@@ -1295,7 +1295,10 @@ static int raft_applylog_cb(raft_server_t* raft,
 
 
 void raft_init(void) {
+    // initialize raft server
     raft_srv = raft_new();
+
+    // set raft callbacks
     raft_cbs.send_requestvote = raft_send_requestvote_cb;
     raft_cbs.send_appendentries = raft_send_appendentries_cb;
     raft_cbs.persist_term = raft_persist_term_cb;
@@ -1304,9 +1307,9 @@ void raft_init(void) {
     raft_cbs.log_poll = raft_log_poll_cb;
     raft_cbs.log_pop = raft_log_pop_cb;
     raft_cbs.applylog = raft_applylog_cb;
-
     raft_set_callbacks(raft_srv, &raft_cbs, NULL);
 
+    // create UDP socket for communication
     raft_sock = socket(AF_INET, SOCK_DGRAM, 0);
     struct sockaddr_in self = {0};
     self.sin_family = AF_INET;
@@ -1314,6 +1317,7 @@ void raft_init(void) {
     self.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     bind(raft_sock, (struct sockaddr*)&self, sizeof(self));
 
+    // add self as a raft node
     raft_add_node(raft_srv, NULL, opt_raft_id, 1);
     raft_peers[raft_peer_count].id = opt_raft_id;
     raft_peers[raft_peer_count].addr = self;
@@ -1321,6 +1325,7 @@ void raft_init(void) {
     raft_node_set_udata(raft_peers[raft_peer_count].node, &raft_peers[raft_peer_count]);
     raft_peer_count++;
 
+    // parse peers from command line
     if (opt_raft_peers) {
         char *tmp = strdup(opt_raft_peers);
         char *p = strtok(tmp, ",");

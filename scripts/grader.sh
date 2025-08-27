@@ -20,16 +20,23 @@ test_results_path="$grade_results_path/test_raft.txt"
 rm -f $test_results_path
 touch $test_results_path
 
-python main-a.py --file-count 20 --loop-delay 1 > "$test_results_path" 2>&1 &
+# wait for the election to settle
+echo "waiting for 5 seconds to let the election settle"
+sleep 2
 
-# wait for a bit 
-sleep 10
+echo "running tests, output in $test_results_path"
+python -u main-a.py --file-count 20 --loop-delay 1 | tee -a "$test_results_path" &
+
+echo "waiting for 10 seconds to let tests start"
+sleep 5.5
 
 # the pid of the first replica can be found in inst1/unfsd.pid
-replica1_pid=$(cat $script_dir/inst1/unfsd.pid)
 
+replica1_pid=$(cat $script_dir/inst1/unfsd.pid)
 echo "making replica 1 unresponsive"
 kill -SIGUSR2 $replica1_pid
+
+
 # wait for a bit
 sleep 10
 
@@ -39,8 +46,9 @@ kill -SIGUSR1 $replica1_pid
 # wait for the tests to finish
 wait
 
-
-sleep 10
+# prompt before stopping nfs
+echo "Tests finished. Press Enter to stop nfs and clean up"
+read -r
 
 cd $script_dir
 ./stop-nfs-ext2.sh

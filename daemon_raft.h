@@ -8,8 +8,8 @@
 extern char *opt_raft_log;
 extern int opt_raft_id;
 extern char *opt_raft_peers;
-
 extern raft_server_t *raft_srv;
+
 
 typedef struct raft_client_info {
     struct in6_addr addr;
@@ -19,26 +19,29 @@ typedef struct raft_client_info {
     uint32_t gids[NGRPS];
 } raft_client_info_t;
 
+
+// main functions for initializing and running Raft 
 void raft_init(void);
+
+void wait_for_leader(void);
+
 void raft_net_receive(void);
 
 void print_leader_info(void);
 
 void adjust_handles_for_proc(u_long proc, void *argp); 
 
+int raft_serialize_and_replicate_nfs_op(struct svc_req *rqstp, 
+                                         struct in6_addr remote_addr, 
+                                         xdrproc_t _xdr_argument, 
+                                         void *argument);
+
+
 // some helper functions for debugging
 const char *nfs3_proc_name(u_long proc); 
 const char *mountproc_name(u_long proc); 
 void print_buffer_hex(const void *buf, size_t len, const char *label);
 
-/* Wait for leader election before starting NFS services */
-void wait_for_leader(void);
 
-// Implementation for raft_serialize_and_replicate_nfs_op
-    
-void raft_serialize_and_replicate_nfs_op(struct svc_req *rqstp, 
-                                         struct in6_addr remote_addr, 
-                                         xdrproc_t _xdr_argument, 
-                                         void *argument);
 
 #endif /* DAEMON_RAFT_H */

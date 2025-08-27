@@ -453,161 +453,6 @@ static void parse_options(int argc, char **argv)
 }
 
 /*
- * Translate a handle to a path and back again.  This mirrors what the
- * service functions do via the PREP macro, but we do it here so that any
- * incoming request first goes through a machine independent representation
- * of the handle before the actual NFS operation is executed.
- */
-static void refresh_handle(nfs_fh3 *fh, struct svc_req *rqstp)
-{
-    struct in6_addr addr;
-    char client[INET6_ADDRSTRLEN];
-    char hex[FH_MAXBUF * 2 + 1];
-
-    get_remote(rqstp, &addr);
-    inet_ntop(AF_INET6, &addr, client, sizeof(client));
-    fh_to_hex(fh, hex);
-    logmsg(LOG_INFO, "refresh_handle: client=%s fh=%s", client, hex);
-
-    const char *path = handle_log_lookup(client, fh);
-    if (!path)
-        path = fh_decomp(*fh);
-    logmsg(LOG_INFO, "refresh_handle: path %s", path ? path : "(none)");
-
-    if (path) {
-        /* Update exports information so fh_comp() uses current settings */
-        exports_options(path, rqstp, NULL, NULL);
-
-        /* Recreate the file handle from the canonical path */
-        unfs3_fh_t tmp_fh = fh_comp(path, rqstp, FH_ANY);
-
-        if (fh_valid(tmp_fh)) {
-            char *buf = malloc(FH_MAXBUF);
-
-            if (buf) {
-                nfs_fh3 newfh = fh_encode(&tmp_fh, buf);
-
-                fh_to_hex(&newfh, hex);
-                logmsg(LOG_INFO, "refresh_handle: newfh %s", hex);
-
-                /* Replace the old handle */
-                free(fh->data.data_val);
-                fh->data.data_len = newfh.data.data_len;
-                fh->data.data_val = newfh.data.data_val;
-            }
-        }
-    }
-} 
-
-/*
- * Convert any filehandles contained in the RPC arguments into paths and
- * back into handles.  This ensures that handles are processed in a machine
- * independent form prior to executing the requested operation.
- */
-static void preprocess_handles(u_long proc, void *argp, struct svc_req *rqstp)
-{
-    logmsg(LOG_INFO, "preprocess_handles called for %s", nfs3_proc_name(proc));
-    switch (proc) {
-        case NFSPROC3_SETATTR:
-            {
-                char hex[FH_MAXBUF * 2 + 1];
-                fh_to_hex(&((SETATTR3args *)argp)->object, hex);
-                logmsg(LOG_INFO, "preprocess_handles: SETATTR handle %s", hex);
-            }
-            refresh_handle(&((SETATTR3args *)argp)->object, rqstp);
-            break;
-        case NFSPROC3_WRITE:
-            {
-                char hex[FH_MAXBUF * 2 + 1];
-                fh_to_hex(&((WRITE3args *)argp)->file, hex);
-                logmsg(LOG_INFO, "preprocess_handles: WRITE handle %s", hex);
-            }
-            refresh_handle(&((WRITE3args *)argp)->file, rqstp);
-            break;
-        case NFSPROC3_CREATE:
-            {
-                char hex[FH_MAXBUF * 2 + 1];
-                fh_to_hex(&((CREATE3args *)argp)->where.dir, hex);
-                logmsg(LOG_INFO, "preprocess_handles: CREATE handle %s", hex);
-            }
-            refresh_handle(&((CREATE3args *)argp)->where.dir, rqstp);
-            break;
-        case NFSPROC3_MKDIR:
-            {
-                char hex[FH_MAXBUF * 2 + 1];
-                fh_to_hex(&((MKDIR3args *)argp)->where.dir, hex);
-                logmsg(LOG_INFO, "preprocess_handles: MKDIR handle %s", hex);
-            }
-            refresh_handle(&((MKDIR3args *)argp)->where.dir, rqstp);
-            break;
-        case NFSPROC3_SYMLINK:
-            {
-                char hex[FH_MAXBUF * 2 + 1];
-                fh_to_hex(&((SYMLINK3args *)argp)->where.dir, hex);
-                logmsg(LOG_INFO, "preprocess_handles: SYMLINK handle %s", hex);
-            }
-            refresh_handle(&((SYMLINK3args *)argp)->where.dir, rqstp);
-            break;
-        case NFSPROC3_MKNOD:
-            {
-                char hex[FH_MAXBUF * 2 + 1];
-                fh_to_hex(&((MKNOD3args *)argp)->where.dir, hex);
-                logmsg(LOG_INFO, "preprocess_handles: MKNOD handle %s", hex);
-            }
-            refresh_handle(&((MKNOD3args *)argp)->where.dir, rqstp);
-            break;
-        case NFSPROC3_REMOVE:
-            {
-                char hex[FH_MAXBUF * 2 + 1];
-                fh_to_hex(&((REMOVE3args *)argp)->object.dir, hex);
-                logmsg(LOG_INFO, "preprocess_handles: REMOVE handle %s", hex);
-            }
-            refresh_handle(&((REMOVE3args *)argp)->object.dir, rqstp);
-            break;
-        case NFSPROC3_RMDIR:
-            {
-                char hex[FH_MAXBUF * 2 + 1];
-                fh_to_hex(&((RMDIR3args *)argp)->object.dir, hex);
-                logmsg(LOG_INFO, "preprocess_handles: RMDIR handle %s", hex);
-            }
-            refresh_handle(&((RMDIR3args *)argp)->object.dir, rqstp);
-            break;
-        case NFSPROC3_RENAME:
-            {
-                char hex[FH_MAXBUF * 2 + 1];
-                fh_to_hex(&((RENAME3args *)argp)->from.dir, hex);
-                logmsg(LOG_INFO, "preprocess_handles: RENAME from handle %s", hex);
-                fh_to_hex(&((RENAME3args *)argp)->to.dir, hex);
-                logmsg(LOG_INFO, "preprocess_handles: RENAME to handle %s", hex);
-            }
-            refresh_handle(&((RENAME3args *)argp)->from.dir, rqstp);
-            refresh_handle(&((RENAME3args *)argp)->to.dir, rqstp);
-            break;
-        case NFSPROC3_LINK:
-            {
-                char hex[FH_MAXBUF * 2 + 1];
-                fh_to_hex(&((LINK3args *)argp)->file, hex);
-                logmsg(LOG_INFO, "preprocess_handles: LINK file handle %s", hex);
-                fh_to_hex(&((LINK3args *)argp)->link.dir, hex);
-                logmsg(LOG_INFO, "preprocess_handles: LINK dir handle %s", hex);
-            }
-            refresh_handle(&((LINK3args *)argp)->file, rqstp);
-            refresh_handle(&((LINK3args *)argp)->link.dir, rqstp);
-            break;
-        case NFSPROC3_COMMIT:
-            {
-                char hex[FH_MAXBUF * 2 + 1];
-                fh_to_hex(&((COMMIT3args *)argp)->file, hex);
-                logmsg(LOG_INFO, "preprocess_handles: COMMIT handle %s", hex);
-            }
-            refresh_handle(&((COMMIT3args *)argp)->file, rqstp);
-            break;
-        default:
-            break;
-    }
-}
-
-/*
  * signal handler and error exit function
  */
 void daemon_exit(int error)
@@ -874,6 +719,11 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
     // preprocess_handles(rqstp->rq_proc, &argument, rqstp);
     
     /* Serialize and replicate the operation using Raft */
+
+    logmsg(LOG_CRIT, "received operation %s", nfs3_proc_name(rqstp->rq_proc));
+
+    int replication_res = 0; 
+
     switch (rqstp->rq_proc) {
         case NFSPROC3_LOOKUP:
         case NFSPROC3_READLINK:
@@ -886,177 +736,39 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
         case NFSPROC3_PATHCONF:
         case NFSPROC3_ACCESS:
             // These operations do not modify the filesystem, we don't need to replicate them
+            replication_res = 0; // success
             break;
         default:
             // For all other operations, serialize and replicate
             logmsg(LOG_CRIT, "Replicating operation %s", nfs3_proc_name(rqstp->rq_proc));
-            raft_serialize_and_replicate_nfs_op(rqstp, remote_addr, _xdr_argument, &argument);
+
+            replication_res = raft_serialize_and_replicate_nfs_op(rqstp, 
+                                                                  remote_addr, 
+                                                                  _xdr_argument, 
+                                                                  &argument);
+
+            if (replication_res != 0) {
+                logmsg(LOG_CRIT, "Failed to replicate operation %s, error %d",
+                          nfs3_proc_name(rqstp->rq_proc), replication_res);
+            }
             break;
     }
 
-    // change the handles to that of this replica. 
-    // useful for scenarios where the handle was generated by a different leader 
-    // at a different time, and and now the client is asking to do operations based 
-    // on that handle on this replica.
-    adjust_handles_for_proc(rqstp->rq_proc, &argument);
 
-    logmsg(LOG_CRIT, "Executing operation %s", nfs3_proc_name(rqstp->rq_proc));
-    result = (*local)((char *)&argument, rqstp);
+    if (replication_res == 0){
+        // change the handles to that of this replica. 
+        // useful for scenarios where the handle was generated by a different leader 
+        // at a different time, and and now the client is asking to do operations based 
+        // on that handle on this replica.
+        adjust_handles_for_proc(rqstp->rq_proc, &argument);
 
-
-    // /* Create log entry for modifying operations */
-    // switch (rqstp->rq_proc) {
-    //     case NFSPROC3_LOOKUP: {
-    //         char *path = fh_decomp(argument.nfsproc3_lookup_3_arg.what.dir);
-    //         raft_log("LOOKUP %s/%s", path ? path : "?",
-    //                  argument.nfsproc3_lookup_3_arg.what.name);
-    //         LOOKUP3res *res = (LOOKUP3res *)result;
-    //         if (res && res->status == NFS3_OK && path) {
-    //             char full[NFS_MAXPATHLEN];
-    //             snprintf(full, sizeof(full), "%s/%s", path,
-    //                      argument.nfsproc3_lookup_3_arg.what.name);
-    //             handle_log_record(remote_host, full,
-    //                               &res->LOOKUP3res_u.resok.object);
-    //             char hex[FH_MAXBUF * 2 + 1];
-    //             fh_to_hex(&res->LOOKUP3res_u.resok.object, hex);
-    //             logmsg(LOG_INFO, "LOOKUP result handle %s for %s", hex, full);
-    //         }
-    //         break;
-    //     }
-    //     case NFSPROC3_WRITE: {
-    //         char *path = fh_decomp(argument.nfsproc3_write_3_arg.file);
-    //         raft_log("WRITE %s %llu %u", path ? path : "?",
-    //                  (unsigned long long)argument.nfsproc3_write_3_arg.offset,
-    //                  (unsigned int)argument.nfsproc3_write_3_arg.count);
-    //         break;
-    //     }
-    //     case NFSPROC3_CREATE: {
-    //         char *path = fh_decomp(argument.nfsproc3_create_3_arg.where.dir);
-    //         raft_log("CREATE %s/%s", path ? path : "?",
-    //                  argument.nfsproc3_create_3_arg.where.name);
-    //         CREATE3res *res = (CREATE3res *)result;
-    //         if (res && res->status == NFS3_OK && path) {
-    //             char full[NFS_MAXPATHLEN];
-    //             snprintf(full, sizeof(full), "%s/%s", path,
-    //                      argument.nfsproc3_create_3_arg.where.name);
-    //             handle_log_record(remote_host, full,
-    //                               &res->CREATE3res_u.resok.obj.post_op_fh3_u.handle);
-    //             char hex[FH_MAXBUF * 2 + 1];
-    //             fh_to_hex(&res->CREATE3res_u.resok.obj.post_op_fh3_u.handle, hex);
-    //             logmsg(LOG_INFO, "CREATE result handle %s for %s", hex, full);
-    //         }
-    //         break;
-    //     }
-    //     case NFSPROC3_MKDIR: {
-    //         char *path = fh_decomp(argument.nfsproc3_mkdir_3_arg.where.dir);
-    //         raft_log("MKDIR %s/%s", path ? path : "?",
-    //                  argument.nfsproc3_mkdir_3_arg.where.name);
-    //         MKDIR3res *res = (MKDIR3res *)result;
-    //         if (res && res->status == NFS3_OK && path) {
-    //             char full[NFS_MAXPATHLEN];
-    //             snprintf(full, sizeof(full), "%s/%s", path,
-    //                      argument.nfsproc3_mkdir_3_arg.where.name);
-    //             handle_log_record(remote_host, full,
-    //                               &res->MKDIR3res_u.resok.obj.post_op_fh3_u.handle);
-    //             char hex[FH_MAXBUF * 2 + 1];
-    //             fh_to_hex(&res->MKDIR3res_u.resok.obj.post_op_fh3_u.handle, hex);
-    //             logmsg(LOG_INFO, "MKDIR result handle %s for %s", hex, full);
-    //         }
-    //         break;
-    //     }
-    //     case NFSPROC3_SYMLINK: {
-    //         char *path = fh_decomp(argument.nfsproc3_symlink_3_arg.where.dir);
-    //         raft_log("SYMLINK %s/%s", path ? path : "?",
-    //                  argument.nfsproc3_symlink_3_arg.where.name);
-    //         SYMLINK3res *res = (SYMLINK3res *)result;
-    //         if (res && res->status == NFS3_OK && path) {
-    //             char full[NFS_MAXPATHLEN];
-    //             snprintf(full, sizeof(full), "%s/%s", path,
-    //                      argument.nfsproc3_symlink_3_arg.where.name);
-    //             handle_log_record(remote_host, full,
-    //                               &res->SYMLINK3res_u.resok.obj.post_op_fh3_u.handle);
-    //             char hex[FH_MAXBUF * 2 + 1];
-    //             fh_to_hex(&res->SYMLINK3res_u.resok.obj.post_op_fh3_u.handle, hex);
-    //             logmsg(LOG_INFO, "SYMLINK result handle %s for %s", hex, full);
-    //         }
-    //         break;
-    //     }
-    //     case NFSPROC3_MKNOD: {
-    //         char *path = fh_decomp(argument.nfsproc3_mknod_3_arg.where.dir);
-    //         raft_log("MKNOD %s/%s", path ? path : "?",
-    //                  argument.nfsproc3_mknod_3_arg.where.name);
-    //         MKNOD3res *res = (MKNOD3res *)result;
-    //         if (res && res->status == NFS3_OK && path) {
-    //             char full[NFS_MAXPATHLEN];
-    //             snprintf(full, sizeof(full), "%s/%s", path,
-    //                      argument.nfsproc3_mknod_3_arg.where.name);
-    //             handle_log_record(remote_host, full,
-    //                               &res->MKNOD3res_u.resok.obj.post_op_fh3_u.handle);
-    //             char hex[FH_MAXBUF * 2 + 1];
-    //             fh_to_hex(&res->MKNOD3res_u.resok.obj.post_op_fh3_u.handle, hex);
-    //             logmsg(LOG_INFO, "MKNOD result handle %s for %s", hex, full);
-    //         }
-    //         break;
-    //     }
-    //     case NFSPROC3_REMOVE: {
-    //         char *path = fh_decomp(argument.nfsproc3_remove_3_arg.object.dir);
-    //         raft_log("REMOVE %s/%s", path ? path : "?",
-    //                  argument.nfsproc3_remove_3_arg.object.name);
-    //         REMOVE3res *res = (REMOVE3res *)result;
-    //         if (res && res->status == NFS3_OK && path) {
-    //             char full[NFS_MAXPATHLEN];
-    //             snprintf(full, sizeof(full), "%s/%s", path,
-    //                      argument.nfsproc3_remove_3_arg.object.name);
-    //             handle_log_record_remove(remote_host, full);
-    //         }
-    //         break;
-    //     }
-    //     case NFSPROC3_RMDIR: {
-    //         char *path = fh_decomp(argument.nfsproc3_rmdir_3_arg.object.dir);
-    //         raft_log("RMDIR %s/%s", path ? path : "?",
-    //                  argument.nfsproc3_rmdir_3_arg.object.name);
-    //         RMDIR3res *res = (RMDIR3res *)result;
-    //         if (res && res->status == NFS3_OK && path) {
-    //             char full[NFS_MAXPATHLEN];
-    //             snprintf(full, sizeof(full), "%s/%s", path,
-    //                      argument.nfsproc3_rmdir_3_arg.object.name);
-    //             handle_log_record_remove(remote_host, full);
-    //         }
-    //         break;
-    //     }
-    //     case NFSPROC3_RENAME: {
-    //         char *from = fh_decomp(argument.nfsproc3_rename_3_arg.from.dir);
-    //         char *to = fh_decomp(argument.nfsproc3_rename_3_arg.to.dir);
-    //         raft_log("RENAME %s/%s -> %s/%s", from ? from : "?",
-    //                  argument.nfsproc3_rename_3_arg.from.name,
-    //                  to ? to : "?",
-    //                  argument.nfsproc3_rename_3_arg.to.name);
-    //         RENAME3res *res = (RENAME3res *)result;
-    //         if (res && res->status == NFS3_OK && from && to) {
-    //             char old[NFS_MAXPATHLEN];
-    //             char newp[NFS_MAXPATHLEN];
-    //             snprintf(old, sizeof(old), "%s/%s", from,
-    //                      argument.nfsproc3_rename_3_arg.from.name);
-    //             snprintf(newp, sizeof(newp), "%s/%s", to,
-    //                      argument.nfsproc3_rename_3_arg.to.name);
-    //             handle_log_record_rename(remote_host, old, newp);
-    //         }
-    //         break;
-    //     }
-    //     case NFSPROC3_LINK: {
-    //         char *path = fh_decomp(argument.nfsproc3_link_3_arg.link.dir);
-    //         char *src = fh_decomp(argument.nfsproc3_link_3_arg.file);
-    //         raft_log("LINK %s -> %s/%s", src ? src : "?",
-    //                  path ? path : "?",
-    //                  argument.nfsproc3_link_3_arg.link.name);
-    //         break;
-    //     }
-    //     default:
-    //         break;
-    // }
-
-    // sleep(1); 
-
+        logmsg(LOG_CRIT, "Executing operation %s", nfs3_proc_name(rqstp->rq_proc));
+        result = (*local)((char *)&argument, rqstp);
+    } else {
+        // we failed to replicate the operation, return an error
+        result = NULL; 
+    }
+    
     if (result == NULL) {
         logmsg(LOG_ERR, "NFS operation %s failed for %s",
                nfs3_proc_name(rqstp->rq_proc), remote_host);
@@ -1506,7 +1218,7 @@ static SVCXPRT *create_tcp_transport(unsigned int port)
             fprintf(stderr, "Couldn't bind to tcp port %d after 100 attempts\n", port);
             exit(1);
         }
-        logmsg(LOG_WARNING, "Bind to tcp port %d failed, retrying (%d/100)", port, bind_attempts);
+        logmsg(LOG_CRIT, "Bind to tcp port %d failed, retrying (%d/100)", port, bind_attempts);
         usleep(100000); // 0.1 seconds
     }
 
@@ -1526,19 +1238,73 @@ static SVCXPRT *create_tcp_transport(unsigned int port)
     return transp;
 }
 
+
+/* Stop advertising & destroy the SVCXPRTs, releasing the ports */
+static void unregister_nfs_service(SVCXPRT **udptransp, SVCXPRT **tcptransp)
+{
+    /* 2) Remove transports from the svc polling set so no new work arrives */
+    if (udptransp && *udptransp) xprt_unregister(*udptransp);
+    if (tcptransp && *tcptransp) xprt_unregister(*tcptransp);
+
+    /* 3) Proactively shutdown listening sockets (optional but immediate) */
+    if (udptransp && *udptransp) {
+        int fd = (*udptransp)->xp_fd;
+        if (fd >= 0) (void)shutdown(fd, SHUT_RDWR);
+    }
+    if (tcptransp && *tcptransp) {
+        int fd = (*tcptransp)->xp_fd;
+        if (fd >= 0) (void)shutdown(fd, SHUT_RDWR);
+    }
+
+    /* 4) Destroy SVCXPRTs; libtirpc will close() fds and free resources */
+    if (udptransp && *udptransp) { svc_destroy(*udptransp); *udptransp = NULL; }
+    if (tcptransp && *tcptransp) { svc_destroy(*tcptransp); *tcptransp = NULL; }
+
+    /* 5) If you’re inside svc_run(), break the loop so teardown completes */
+    svc_exit();  /* no-op if not in svc_run() */
+}
+
+static void unregister_mount_service(SVCXPRT **udptransp, SVCXPRT **tcptransp)
+{
+    /* 1) Unregister from rpcbind/portmapper so others can claim the prognum */
+    rpcb_unset_all(MOUNTPROG, MOUNTVERS1);
+    rpcb_unset_all(MOUNTPROG, MOUNTVERS3);
+
+    /* 2) Remove transports from the svc polling set so no new work arrives */
+    if (udptransp && *udptransp) xprt_unregister(*udptransp);
+    if (tcptransp && *tcptransp) xprt_unregister(*tcptransp);
+
+    /* 3) Proactively shutdown listening sockets (optional but immediate) */
+    if (udptransp && *udptransp) {
+        int fd = (*udptransp)->xp_fd;
+        if (fd >= 0) (void)shutdown(fd, SHUT_RDWR);
+    }
+    if (tcptransp && *tcptransp) {
+        int fd = (*tcptransp)->xp_fd;
+        if (fd >= 0) (void)shutdown(fd, SHUT_RDWR);
+    }
+
+    /* 4) Destroy SVCXPRTs; libtirpc will close() fds and free resources */
+    if (udptransp && *udptransp) { svc_destroy(*udptransp); *udptransp = NULL; }
+    if (tcptransp && *tcptransp) { svc_destroy(*tcptransp); *tcptransp = NULL; }
+
+    /* 5) If you’re inside svc_run(), break the loop so teardown completes */
+    // svc_exit();  /* no-op if not in svc_run() */
+}
+
 /* Take over NFS and MOUNT services when this node becomes leader */
 static void become_leader(void)
 {
     logmsg(LOG_CRIT, "Leadership acquired, registering NFS and MOUNT services");
 
-    if (nfs_udptransp)
-        svc_destroy(nfs_udptransp);
-    if (nfs_tcptransp)
-        svc_destroy(nfs_tcptransp);
-    if (mount_udptransp && mount_udptransp != nfs_udptransp)
-        svc_destroy(mount_udptransp);
-    if (mount_tcptransp && mount_tcptransp != nfs_tcptransp)
-        svc_destroy(mount_tcptransp);
+    // if (nfs_udptransp)
+    //     svc_destroy(nfs_udptransp);
+    // if (nfs_tcptransp)
+    //     svc_destroy(nfs_tcptransp);
+    // if (mount_udptransp && mount_udptransp != nfs_udptransp)
+    //     svc_destroy(mount_udptransp);
+    // if (mount_tcptransp && mount_tcptransp != nfs_tcptransp)
+    //     svc_destroy(mount_tcptransp);
 
     if (!opt_tcponly)
         nfs_udptransp = create_udp_transport(opt_nfs_port);
@@ -1563,7 +1329,32 @@ static void become_leader(void)
     logmsg(LOG_INFO, "Leader binding MOUNT service to port %d", opt_mount_port);
     register_mount_service(mount_udptransp, mount_tcptransp);
 
-    // exports_parse();
+
+    /* NFS transports */
+    // if (!opt_tcponly)
+    //     udptransp = create_udp_transport(opt_nfs_port);
+    // tcptransp = create_tcp_transport(opt_nfs_port);
+
+    // nfs_udptransp = udptransp;
+    // nfs_tcptransp = tcptransp;
+    
+    // logmsg(LOG_INFO, "NFS server starting on port %d", opt_nfs_port);
+    // register_nfs_service(nfs_udptransp, nfs_tcptransp);
+
+    // /* MOUNT transports. If ports are equal, then the MOUNT service can reuse
+    // the NFS transports. */
+    // if (opt_mount_port != opt_nfs_port) {
+    //     if (!opt_tcponly)
+    //         udptransp = create_udp_transport(opt_mount_port);
+    //     tcptransp = create_tcp_transport(opt_mount_port);
+    // }
+
+    // mount_udptransp = (opt_mount_port != opt_nfs_port) ? udptransp : nfs_udptransp;
+    // mount_tcptransp = (opt_mount_port != opt_nfs_port) ? tcptransp : nfs_tcptransp;
+    
+    // logmsg(LOG_INFO, "MOUNT server starting on port %d", opt_mount_port);
+
+    // register_mount_service(mount_udptransp, mount_tcptransp);
 }
 
 
@@ -1571,21 +1362,23 @@ static void leadership_lost(void)
 {
     logmsg(LOG_CRIT, "Leadership lost, unregistering NFS and MOUNT services");
 
-    if (nfs_udptransp)
-        svc_destroy(nfs_udptransp);
-    if (nfs_tcptransp)
-        svc_destroy(nfs_tcptransp);
-    if (mount_udptransp && mount_udptransp != nfs_udptransp)
-        svc_destroy(mount_udptransp);
-    if (mount_tcptransp && mount_tcptransp != nfs_tcptransp)
-        svc_destroy(mount_tcptransp);
+    // if (nfs_udptransp)
+    //     svc_destroy(nfs_udptransp);
+    // if (nfs_tcptransp)
+    //     svc_destroy(nfs_tcptransp);
+    // if (mount_udptransp && mount_udptransp != nfs_udptransp)
+    //     svc_destroy(mount_udptransp);
+    // if (mount_tcptransp && mount_tcptransp != nfs_tcptransp)
+    //     svc_destroy(mount_tcptransp);
 
-    nfs_udptransp = NULL;
-    nfs_tcptransp = NULL;
-    mount_udptransp = NULL;
-    mount_tcptransp = NULL;
+    // nfs_udptransp = NULL;
+    // nfs_tcptransp = NULL;
+    // mount_udptransp = NULL;
+    // mount_tcptransp = NULL;
 
-    exports_parse();
+    unregister_nfs_service(&nfs_udptransp, &nfs_tcptransp);
+    // unregister_mount_service(mount_udptransp, mount_tcptransp);
+
 }
 
 
@@ -1606,35 +1399,48 @@ static void unfs3_svc_run(void)
         fd_cache_close_inactive();
 
 #if defined(HAVE_SVC_GETREQ_POLL) && HAVE_DECL_SVC_POLLFD
-        if (pollfds_len != svc_max_pollfd) {
-            pollfds = realloc(pollfds, sizeof(struct pollfd) * svc_max_pollfd);
-            if (pollfds == NULL) {
-                perror("unfs3_svc_run: realloc failed");
+
+        if (svc_max_pollfd > 0) {
+            if (pollfds_len != svc_max_pollfd) {
+                pollfds = realloc(pollfds, sizeof(struct pollfd) * svc_max_pollfd);
+                if (pollfds == NULL) {
+                    perror("unfs3_svc_run: realloc failed");
+                    return;
+                }
+                pollfds_len = svc_max_pollfd;
+            }
+
+            for (int i = 0; i < svc_max_pollfd; i++) {
+                pollfds[i].fd = svc_pollfd[i].fd;
+                pollfds[i].events = svc_pollfd[i].events;
+                pollfds[i].revents = 0;
+            }
+
+            r = poll(pollfds, svc_max_pollfd, mytimout);
+            if (r < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                perror("unfs3_svc_run: poll failed");
                 return;
-            }
-            pollfds_len = svc_max_pollfd;
+            } else if (r)
+                svc_getreq_poll(pollfds, r);
+        } else {
+            /* Nothing to poll, sleep for a while */
+            usleep(mytimout * 1000);
         }
-
-        for (int i = 0; i < svc_max_pollfd; i++) {
-            pollfds[i].fd = svc_pollfd[i].fd;
-            pollfds[i].events = svc_pollfd[i].events;
-            pollfds[i].revents = 0;
+        
+        if(was_leader && raft_disabled) {
+            logmsg(LOG_CRIT, "Raft disabled, stepping down from leadership");
+            raft_become_follower(raft_srv);
+            logmsg(LOG_CRIT, "Leadership lost, unregistering services");
+            leadership_lost();
+            is_leader_now = 0;
+            was_leader = 0;
         }
-
-        r = poll(pollfds, svc_max_pollfd, mytimout);
-        if (r < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            perror("unfs3_svc_run: poll failed");
-            return;
-        } else if (r)
-            svc_getreq_poll(pollfds, r);
 
         raft_periodic(raft_srv, mytimout);
-        if(!raft_disabled) {
-            raft_net_receive();            
-        }
+        raft_net_receive();            
         is_leader_now = raft_is_leader(raft_srv);
         
         if (is_leader_now) {
@@ -1642,13 +1448,7 @@ static void unfs3_svc_run(void)
                 logmsg(LOG_CRIT, "Leadership acquired, registering services");
                 become_leader();
             }
-            else if(raft_disabled) {
-                logmsg(LOG_CRIT, "Raft disabled, stepping down from leadership");
-                raft_become_follower(raft_srv);
-            }
-        }
-        
-        if ((!is_leader_now && was_leader) ) {
+        } else if(was_leader) {
             logmsg(LOG_CRIT, "Leadership lost, unregistering services");
             leadership_lost();
         }
@@ -1656,7 +1456,6 @@ static void unfs3_svc_run(void)
         was_leader = is_leader_now;
 
         print_leader_info(); 
-
 #else
         readfds = svc_fdset;
         tv.tv_sec = 1;
@@ -1681,22 +1480,24 @@ static void unfs3_svc_run(void)
         }
         
         raft_periodic(raft_srv, mytimout);
-        if(!raft_disabled) {
-            raft_net_receive();            
-        }
+        raft_net_receive();            
         is_leader_now = raft_is_leader(raft_srv);
         
-        if (is_leader_now && !was_leader) {
-            logmsg(LOG_CRIT, "Leadership acquired, registering services");
-            become_leader();
-        }
-        if ((!is_leader_now && was_leader) ) {
+        if (is_leader_now) {
+            if (!was_leader) {
+                logmsg(LOG_CRIT, "Leadership acquired, registering services");
+                become_leader();
+            }
+            else if(raft_disabled) {
+                logmsg(LOG_CRIT, "Raft disabled, stepping down from leadership");
+                raft_become_follower(raft_srv);
+                logmsg(LOG_CRIT, "Leadership lost, unregistering services");
+                leadership_lost();
+                is_leader_now = 0;
+            }
+        } else if(was_leader) {
             logmsg(LOG_CRIT, "Leadership lost, unregistering services");
             leadership_lost();
-        }
-        if (is_leader_now && raft_disabled) {
-            logmsg(LOG_CRIT, "Raft disabled, stepping down from leadership");
-            raft_become_follower(raft_srv);
         }
 
         was_leader = is_leader_now;
@@ -1812,7 +1613,7 @@ int main(int argc, char **argv)
     create_pid_file();
 
     raft_init();
-    raft_set_election_timeout(raft_srv, opt_raft_id * mytimout + mytimout);
+    raft_set_election_timeout(raft_srv, (opt_raft_id) * mytimout + mytimout);
     wait_for_leader();
     was_leader = raft_is_leader(raft_srv);
     is_leader_now = was_leader;
@@ -1846,38 +1647,6 @@ int main(int argc, char **argv)
     }
 
     if (is_leader_now) {
-        // // The leader will bind to the ports and run the services.
-        // // The followers will not bind to the ports. They will only need to 
-        // // handle raft events and apply them to their local state.
-
-        // logmsg(LOG_INFO, "I am the leader, binding to ports and starting services");
-
-        // /* NFS transports */
-        // if (!opt_tcponly)
-        //     udptransp = create_udp_transport(opt_nfs_port);
-        // tcptransp = create_tcp_transport(opt_nfs_port);
-
-        // nfs_udptransp = udptransp;
-        // nfs_tcptransp = tcptransp;
-        
-        // logmsg(LOG_INFO, "NFS server starting on port %d", opt_nfs_port);
-        // register_nfs_service(nfs_udptransp, nfs_tcptransp);
-
-        // /* MOUNT transports. If ports are equal, then the MOUNT service can reuse
-        // the NFS transports. */
-        // if (opt_mount_port != opt_nfs_port) {
-        //     if (!opt_tcponly)
-        //         udptransp = create_udp_transport(opt_mount_port);
-        //     tcptransp = create_tcp_transport(opt_mount_port);
-        // }
-
-        // mount_udptransp = (opt_mount_port != opt_nfs_port) ? udptransp : nfs_udptransp;
-        // mount_tcptransp = (opt_mount_port != opt_nfs_port) ? tcptransp : nfs_tcptransp;
-        
-        // logmsg(LOG_INFO, "MOUNT server starting on port %d", opt_mount_port);
-
-        // register_mount_service(mount_udptransp, mount_tcptransp);
-
         become_leader();
     }
     
