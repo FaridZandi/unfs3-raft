@@ -181,6 +181,7 @@ int raft_serialize_and_replicate_nfs_op(struct svc_req *rqstp,
                                          xdrproc_t _xdr_argument, 
                                          void *argument) {
     if (raft_is_leader(raft_srv)) {
+
         // flush any pending logs
         raft_apply_all(raft_srv);
 
@@ -252,6 +253,8 @@ int raft_serialize_and_replicate_nfs_op(struct svc_req *rqstp,
                 // free(buf); 
             }
         }
+
+        // apply all committed entries to state machine
         raft_apply_all(raft_srv);
     } else {
         logmsg(LOG_CRIT, "Not the leader, cannot replicate operation %s",
