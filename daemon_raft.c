@@ -139,6 +139,20 @@ void print_buffer_hex(const void *buf, size_t len, const char *label)
     fflush(stderr); 
 }
 
+// return formatted timestring to hh:mm:ss:ms
+char* time_str() {
+    static char timebuf[32];
+
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+
+    snprintf(timebuf, sizeof(timebuf), "%02ld:%02ld:%02ld.%03ld",
+             ts.tv_sec / 3600, (ts.tv_sec % 3600) / 60, ts.tv_sec % 60,
+             ts.tv_nsec / 1000000);
+
+    return timebuf;
+}
+
 /* Wait for leader election before starting NFS services */
 void wait_for_leader(void)
 {
@@ -188,13 +202,14 @@ void raft_make_progress() {
                      (now.tv_nsec - last_progress_time.tv_nsec) / 1000000;
     } else {
         logmsg(LOG_CRIT, "This isn't supposed to be happening");
+
         usleep(timeout_ms * 1000);
         elapsed_ms = timeout_ms;
     }
 
     logmsg(LOG_DEBUG, "raft_make_progress: elapsed_ms = %ld", elapsed_ms);
 
-    raft_periodic(raft_srv, elapsed_ms > 0 ? elapsed_ms : timeout_ms);
+    raft_periodic(raft_srv, elapsed_ms);
     raft_net_receive();
 
     last_progress_time = now;

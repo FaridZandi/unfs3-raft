@@ -43,7 +43,6 @@ void raft_make_progress();
 const char *nfs3_proc_name(u_long proc); 
 const char *mountproc_name(u_long proc); 
 void print_buffer_hex(const void *buf, size_t len, const char *label);
-
-
+char* time_str();
 
 #endif /* DAEMON_RAFT_H */

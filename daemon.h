@@ -25,7 +25,8 @@ void daemon_exit(int);
 void logmsg(int, const char *, ...);
 
 
-#define timeout_ms 100 
+#define timeout_ms 100
+#define election_timeout_ms 100
 
 /* remote address */
 int get_remote(struct svc_req *, struct in6_addr *);

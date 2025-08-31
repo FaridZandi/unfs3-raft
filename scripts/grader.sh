@@ -25,13 +25,14 @@ echo "waiting for 5 seconds to let the election settle"
 sleep 2
 
 echo "running tests, output in $test_results_path"
-python -u main-a.py --file-count 20 --loop-delay 1 | tee -a "$test_results_path" &
+python -u main-a.py --file-count 20 --loop-delay 0 | tee -a "$test_results_path" &
 
 echo "waiting for 10 seconds to let tests start"
 sleep 5.5
 
-# the pid of the first replica can be found in inst1/unfsd.pid
 
+# TODO: there's no guarantee that replica 1 is the leader. 
+# the pid of the first replica can be found in inst1/unfsd.pid
 replica1_pid=$(cat $script_dir/inst1/unfsd.pid)
 echo "making replica 1 unresponsive"
 kill -SIGUSR2 $replica1_pid

@@ -136,6 +136,7 @@ void logmsg(int prio, const char *fmt, ...)
 #endif
     } else {
         if (prio <= LOG_CRIT) {
+            fprintf(stderr, "[%s] ", time_str());
             vprintf(fmt, ap);
             putchar('\n');
         }
@@ -855,7 +856,8 @@ static void mountprog_3(struct svc_req *rqstp, register SVCXPRT * transp)
         return;
     }
 
-    logmsg(LOG_CRIT, "received MOUNT operation");
+    logmsg(LOG_CRIT, "received MOUNT operation %s",
+           mountproc_name(rqstp->rq_proc));
 
     result = (*local) ((char *) &argument, rqstp);
 
@@ -1517,7 +1519,7 @@ int main(int argc, char **argv)
     create_pid_file();
 
     raft_init();
-    raft_set_election_timeout(raft_srv, (opt_raft_id + 1) * timeout_ms);
+    raft_set_election_timeout(raft_srv, (opt_raft_id + 10) * election_timeout_ms);
     wait_for_leader();
     was_leader = raft_is_leader(raft_srv);
     is_leader_now = was_leader;
