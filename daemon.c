@@ -1392,7 +1392,7 @@ static void unfs3_svc_run(void)
                 pollfds[i].revents = 0;
             }
 
-            r = poll(pollfds, svc_max_pollfd, mytimout);
+            r = poll(pollfds, svc_max_pollfd, timeout_ms);
             if (r < 0) {
                 if (errno == EINTR) {
                     continue;
@@ -1403,7 +1403,7 @@ static void unfs3_svc_run(void)
                 svc_getreq_poll(pollfds, r);
         } else {
             /* Nothing to poll, sleep for a while */
-            usleep(mytimout * 1000);
+            usleep(timeout_ms * 1000);
         }
         
         if(was_leader && raft_disabled) {
@@ -1415,8 +1415,8 @@ static void unfs3_svc_run(void)
             was_leader = 0;
         }
 
-        raft_periodic(raft_srv, mytimout);
-        raft_net_receive();            
+        raft_make_progress();
+
         is_leader_now = raft_is_leader(raft_srv);
         
         if (is_leader_now) {
@@ -1455,8 +1455,8 @@ static void unfs3_svc_run(void)
                 svc_getreqset(&readfds);
         }
         
-        raft_periodic(raft_srv, mytimout);
-        raft_net_receive();            
+        raft_make_progress(); 
+
         is_leader_now = raft_is_leader(raft_srv);
         
         if (is_leader_now) {
@@ -1589,7 +1589,7 @@ int main(int argc, char **argv)
     create_pid_file();
 
     raft_init();
-    raft_set_election_timeout(raft_srv, (opt_raft_id) * mytimout + mytimout);
+    raft_set_election_timeout(raft_srv, (opt_raft_id + 10) * timeout_ms);
     wait_for_leader();
     was_leader = raft_is_leader(raft_srv);
     is_leader_now = was_leader;

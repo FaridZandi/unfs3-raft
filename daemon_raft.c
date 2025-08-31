@@ -25,6 +25,7 @@
 #include "xdr.h"
 #include <rpc/rpc.h>
 #include <rpc/auth_unix.h>
+#include <time.h> 
 
 char *opt_raft_log = "raft.log";
 int opt_raft_id = 1;
@@ -48,6 +49,7 @@ struct raft_peer {
 static struct raft_peer raft_peers[16];
 static int raft_peer_count = 0;
 
+static struct timespec last_progress_time = {0, 0};
 
 
 static struct raft_peer* raft_peer_from_addr(struct sockaddr_in* addr) {
@@ -143,9 +145,12 @@ void wait_for_leader(void)
     logmsg(LOG_INFO, "waiting for Raft leader election");
     
     while (raft_get_current_leader(raft_srv) == -1) {
-        raft_periodic(raft_srv, mytimout);
-        raft_net_receive();
-        usleep(mytimout * 1000); 
+        usleep(timeout_ms * 1000);
+
+        // raft_periodic(raft_srv, timeout_ms);
+        // raft_net_receive();
+
+        raft_make_progress(); 
     }
 
     int leader = raft_get_current_leader(raft_srv);
@@ -173,6 +178,35 @@ void print_leader_info(void){
         else
             logmsg(LOG_INFO, "I have not voted yet");
     }
+}
+
+
+void raft_make_progress() {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+
+    long elapsed_ms = 0;
+    if (last_progress_time.tv_sec != 0 || last_progress_time.tv_nsec != 0) {
+        elapsed_ms = (now.tv_sec - last_progress_time.tv_sec) * 1000 +
+                     (now.tv_nsec - last_progress_time.tv_nsec) / 1000000;
+    } else {
+        logmsg(LOG_CRIT, "This isn't supposed to be happening");
+        usleep(timeout_ms * 1000);
+        elapsed_ms = timeout_ms;
+    }
+   
+    if (elapsed_ms == 0) {
+        // usleep(1000);
+        // elapsed_ms = 1;
+    }
+
+    logmsg(LOG_CRIT, "raft_make_progress: elapsed_ms = %ld", elapsed_ms);
+
+    raft_periodic(raft_srv, elapsed_ms);
+    // raft_periodic(raft_srv, timeout_ms);
+    raft_net_receive();
+
+    last_progress_time = now;
 }
 
 
@@ -239,9 +273,9 @@ int raft_serialize_and_replicate_nfs_op(struct svc_req *rqstp,
                             if (raft_disabled){
                                 return 1; 
                             }
-                            sleep(mytimout / 1000);
-                            raft_periodic(raft_srv, mytimout);
-                            raft_net_receive();
+                            
+                            usleep(timeout_ms * 1000);
+                            raft_make_progress(); 
                         }
                     }
                 }
@@ -1299,6 +1333,7 @@ static int raft_applylog_cb(raft_server_t* raft,
 
 void raft_init(void) {
     // initialize raft server
+    clock_gettime(CLOCK_MONOTONIC, &last_progress_time);
     raft_srv = raft_new();
 
     // set raft callbacks
