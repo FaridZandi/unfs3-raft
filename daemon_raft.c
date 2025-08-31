@@ -52,6 +52,43 @@ static int raft_peer_count = 0;
 static struct timespec last_progress_time = {0, 0};
 
 
+
+//////////////////////////////////////////////////////////////////////////// 
+#define CAPACITY 1000  // the ring size
+
+typedef struct {
+    raft_index_t index;   // op_index stored
+    char *data;  // result pointer
+} result_item;
+
+result_item result_buffer[CAPACITY];
+int write_pos = 0;   // next position to write
+int read_pos  = 0;   // optional: next position to read (for FIFO)
+
+// Store a result with its op_index
+void put_result(raft_index_t op_index, char *data) {
+    result_buffer[write_pos].index = op_index;
+    result_buffer[write_pos].data  = data;
+
+    write_pos = (write_pos + 1) % CAPACITY;
+    if (write_pos == read_pos) { 
+        logmsg(LOG_CRIT, "Result buffer overflow, exiting ...");
+        exit(1);
+    }
+}
+
+result_item* get_result() {
+    if (read_pos == write_pos) {
+        return NULL; // buffer is empty
+    }
+
+    result_item* item = &result_buffer[read_pos];
+    read_pos = (read_pos + 1) % CAPACITY;
+    return item;
+}
+
+//////////////////////////////////////////////////////////////////////////// 
+
 static struct raft_peer* raft_peer_from_addr(struct sockaddr_in* addr) {
     for (int i = 0; i < raft_peer_count; i++)
         if (addr->sin_port == raft_peers[i].addr.sin_port && addr->sin_addr.s_addr == raft_peers[i].addr.sin_addr.s_addr)
@@ -147,7 +184,7 @@ char* time_str() {
     clock_gettime(CLOCK_REALTIME, &ts);
 
     snprintf(timebuf, sizeof(timebuf), "%02ld:%02ld:%02ld.%03ld",
-             ts.tv_sec / 3600, (ts.tv_sec % 3600) / 60, ts.tv_sec % 60,
+             (ts.tv_sec / 3600) % 24, (ts.tv_sec % 3600) / 60, ts.tv_sec % 60,
              ts.tv_nsec / 1000000);
 
     return timebuf;
@@ -217,108 +254,139 @@ void raft_make_progress() {
 
 
 
-int raft_serialize_and_replicate_nfs_op(struct svc_req *rqstp, 
+char* raft_serialize_and_replicate_nfs_op(struct svc_req *rqstp, 
                                          struct in6_addr remote_addr, 
                                          xdrproc_t _xdr_argument, 
                                          void *argument) {
     if (!raft_is_leader(raft_srv)) {
         logmsg(LOG_CRIT, "Not the leader, cannot replicate operation %s",
                 nfs3_proc_name(rqstp->rq_proc));
-        return 1;
+        return NULL;
     }
+
     // flush any pending logs
     raft_apply_all(raft_srv);
 
 
     u_int arg_len = xdr_sizeof(_xdr_argument, (char *)argument);
-    if (arg_len > 0) {
-        size_t info_size = sizeof(raft_client_info_t);
-        size_t proc_size = sizeof(uint32_t);
-        size_t total_size = proc_size + info_size + arg_len;
-
-        char *buf = malloc(total_size);
-
-        if (!buf) {
-            logmsg(LOG_CRIT, "Failed to allocate memory for replication buffer");
-            return 2;
-        }
-        size_t offset = 0;
-        
-
-        // part 1: serialize procedure number. 
-        uint32_t proc = htonl(rqstp->rq_proc);
-        memcpy(buf + offset, &proc, proc_size);
-        offset += proc_size;
-        
-
-        // part 2: serialize client information. Currently not used much. 
-        raft_client_info_t info = {0};
-        info.addr = remote_addr;
-        if (rqstp->rq_cred.oa_flavor == AUTH_UNIX) {
-            struct authunix_parms *auth = (struct authunix_parms *)rqstp->rq_clntcred;
-            info.uid = auth->aup_uid;
-            info.gid = auth->aup_gid;
-            info.gid_len = auth->aup_len;
-            for (u_int i = 0; i < auth->aup_len && i < NGRPS; i++)
-                info.gids[i] = auth->aup_gids[i];
-        }
-        int written = raft_client_info_serialize(&info, (uint8_t *)(buf + offset), info_size);
-        if (written != info_size) {
-            logmsg(LOG_CRIT, "Serialization of raft_client_info_t failed");
-            free(buf);
-            return 2; 
-        }
-        offset += info_size;
-
-
-
-        // part 3: serialize the actual arguments
-        XDR xdrs;
-        xdrmem_create(&xdrs, buf + offset, arg_len, XDR_ENCODE);
-        if (!((xdrproc_t)_xdr_argument)(&xdrs, (char *)argument)) {
-            logmsg(LOG_CRIT, "Serialization of arguments failed");
-            xdr_destroy(&xdrs);
-            free(buf);
-            return 2;
-        }
-
-        // Serialized data is ready, send it to the followers
-        msg_entry_t ety = {0};
-        ety.data.buf = buf;
-        ety.data.len = offset + arg_len;
-        ety.id = raft_get_current_idx(raft_srv) + 1;
-        ety.type = RAFT_LOGTYPE_NORMAL;
-
-        msg_entry_response_t resp;
-        if (raft_recv_entry(raft_srv, &ety, &resp) != 0) {
-            logmsg(LOG_CRIT, "Failed to receive entry response");
-            free(buf);
-            return 2;
-        }
-
-        logmsg(LOG_CRIT, "Logged operation %s as log idx %ld",
-                nfs3_proc_name(rqstp->rq_proc), resp.idx);
-        
-
-        while (raft_get_commit_idx(raft_srv) < resp.idx) {
-            if (raft_disabled){
-                return 1; 
-            }
-
-            usleep(timeout_ms * 1000);
-            raft_make_progress();
-        }
-
-        xdr_destroy(&xdrs);
-
-        // NOTE: Freeing the buffer at this point will cause the operations 
-        // to be received incorrectly by the followers. Need to happen later.  
-        // free(buf); 
+    if (arg_len == 0) {
+        logmsg(LOG_CRIT, "Failed to get argument length");
+        return NULL;
     }
+
+    size_t info_size = sizeof(raft_client_info_t);
+    size_t proc_size = sizeof(uint32_t);
+    size_t total_size = proc_size + info_size + arg_len;
+
+    char *buf = malloc(total_size);
+
+    if (!buf) {
+        logmsg(LOG_CRIT, "Failed to allocate memory for replication buffer");
+        return NULL; 
+    }
+    size_t offset = 0;
+    
+
+    // part 1: serialize procedure number. 
+    uint32_t proc = htonl(rqstp->rq_proc);
+    memcpy(buf + offset, &proc, proc_size);
+    offset += proc_size;
+    
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // part 2: serialize client information. Currently not used much. 
+    ////////////////////////////////////////////////////////////////////////////////////////////
+
+    raft_client_info_t info = {0};
+    info.addr = remote_addr;
+    if (rqstp->rq_cred.oa_flavor == AUTH_UNIX) {
+        struct authunix_parms *auth = (struct authunix_parms *)rqstp->rq_clntcred;
+        info.uid = auth->aup_uid;
+        info.gid = auth->aup_gid;
+        info.gid_len = auth->aup_len;
+        for (u_int i = 0; i < auth->aup_len && i < NGRPS; i++)
+            info.gids[i] = auth->aup_gids[i];
+    }
+    int written = raft_client_info_serialize(&info, (uint8_t *)(buf + offset), info_size);
+    if (written != info_size) {
+        logmsg(LOG_CRIT, "Serialization of raft_client_info_t failed");
+        free(buf);
+        return NULL; 
+    }
+    offset += info_size;
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+    // part 3: serialize the actual arguments
+    XDR xdrs;
+    xdrmem_create(&xdrs, buf + offset, arg_len, XDR_ENCODE);
+    if (!((xdrproc_t)_xdr_argument)(&xdrs, (char *)argument)) {
+        logmsg(LOG_CRIT, "Serialization of arguments failed");
+        xdr_destroy(&xdrs);
+        free(buf);
+        return NULL; 
+    }
+
+    // Serialized data is ready, send it to the followers
+    msg_entry_t ety = {0};
+    ety.data.buf = buf;
+    ety.data.len = offset + arg_len;
+    ety.id = raft_get_current_idx(raft_srv) + 1;
+    ety.type = RAFT_LOGTYPE_NORMAL;
+
+    msg_entry_response_t resp;
+    if (raft_recv_entry(raft_srv, &ety, &resp) != 0) {
+        logmsg(LOG_CRIT, "Failed to receive entry response");
+        free(buf);
+        return NULL; 
+    }
+
+    logmsg(LOG_CRIT, "Logged operation %s as log idx %ld",
+            nfs3_proc_name(rqstp->rq_proc), resp.idx);
+    
+
+    while (raft_get_commit_idx(raft_srv) < resp.idx) {
+        if (raft_disabled){
+            return NULL; 
+        }
+
+        usleep(timeout_ms * 1000);
+        raft_make_progress();
+    }
+
+    xdr_destroy(&xdrs);
+
+    // NOTE: Freeing the buffer at this point will cause the operations 
+    // to be received incorrectly by the followers. Need to happen later.  
+    // free(buf); 
 
     // apply all committed entries to state machine
     raft_apply_all(raft_srv);
-    return 0; 
+
+    // the results are stored in the ring buffer. keep polling until we get the right entry_index 
+    raft_index_t entry_idx = resp.idx;
+
+    // there might be other results for the previous entries. keep polling until we get the right entry_index
+    while (1) {
+        result_item* result = get_result();
+
+        if (result == NULL) {
+            logmsg(LOG_CRIT, "Failed to get result for entry index %ld", entry_idx);
+            return NULL; 
+        }
+
+        if (result->index == entry_idx) {
+            // Found the result for the entry index
+            logmsg(LOG_CRIT, "Got the result for entry index %ld", entry_idx);
+            return result->data;
+        } else {
+            logmsg(LOG_CRIT, "got the results for %ld instead of %ld ...", result->index, entry_idx);
+        }
+    }
+
+    return NULL;
 }
 
 
@@ -1001,7 +1069,7 @@ void adjust_handles_for_proc(u_long proc, void *argp)
     }
 }
 
-static void apply_nfs_operation(uint32_t proc, raft_client_info_t *info, char* buf, size_t len)
+static char* apply_nfs_operation(uint32_t proc, raft_client_info_t *info, char* buf, size_t len)
 {
     union {
         GETATTR3args getattr;
@@ -1139,6 +1207,12 @@ static void apply_nfs_operation(uint32_t proc, raft_client_info_t *info, char* b
     /* Convert incoming file handles to local form */
     adjust_handles_for_proc(proc, &argument);
 
+
+
+
+    ///////////////////////////////////////////////////////////////////
+    //// attempts to recreate the same environment as the original
+    ///////////////////////////////////////////////////////////////////
     struct authunix_parms cred = {0};
     gid_t gids[NGRPS] = {0};
     unsigned int i;
@@ -1167,10 +1241,15 @@ static void apply_nfs_operation(uint32_t proc, raft_client_info_t *info, char* b
     dummy.rq_clntcred = &cred;
     dummy.rq_cred.oa_flavor = AUTH_UNIX;
     dummy.rq_xprt = &xprt;
+    ///////////////////////////////////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////
+
 
     logmsg(LOG_DEBUG, "apply_nfs_operation: executing proc %s", nfs3_proc_name(proc));
 
-    (void)local((char *)&argument, &dummy);
+    char* result = local((char *)&argument, &dummy);
+
+    return result;
 }
 
 
@@ -1346,10 +1425,16 @@ static int raft_applylog_cb(raft_server_t* raft,
     logmsg(LOG_CRIT, "raft: applying log idx %lu proc %s",
            (unsigned long)entry_idx, nfs3_proc_name(proc));
 
-    apply_nfs_operation(proc,
-                        &info,
-                        (char*)entry->data.buf + offset,
-                        entry->data.len - offset);
+    char* result = apply_nfs_operation(proc,
+                                    &info,
+                                    (char*)entry->data.buf + offset,
+                                    entry->data.len - offset);
+
+                                    /* Store the result for later retrieval by the client facing function. a simple example
+     * using a ring buffer. replace with something more sophisticated later on. */
+    put_result(entry_idx, result);
+
+
     return 0;
 }
 

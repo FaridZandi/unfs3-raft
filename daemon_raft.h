@@ -31,7 +31,7 @@ void print_leader_info(void);
 
 void adjust_handles_for_proc(u_long proc, void *argp); 
 
-int raft_serialize_and_replicate_nfs_op(struct svc_req *rqstp, 
+char* raft_serialize_and_replicate_nfs_op(struct svc_req *rqstp, 
                                          struct in6_addr remote_addr, 
                                          xdrproc_t _xdr_argument, 
                                          void *argument);
