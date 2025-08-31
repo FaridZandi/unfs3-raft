@@ -1105,7 +1105,7 @@ static SVCXPRT *create_udp_transport(unsigned int port)
             exit(1);
         }
         logmsg(LOG_WARNING, "Bind to udp port %d failed, retrying (%d/100)", port, bind_attempts);
-        usleep(100000); // 0.1 seconds
+        usleep(timeout_ms * 1000); // 0.1 seconds
     }
     /////////////////////////////////////////////////
 
@@ -1195,7 +1195,7 @@ static SVCXPRT *create_tcp_transport(unsigned int port)
             exit(1);
         }
         logmsg(LOG_CRIT, "Bind to tcp port %d failed, retrying (%d/100)", port, bind_attempts);
-        usleep(100000); // 0.1 seconds
+        usleep(timeout_ms * 1000);
     }
 
     if (listen(sock, SOMAXCONN)) {
@@ -1215,7 +1215,17 @@ static SVCXPRT *create_tcp_transport(unsigned int port)
 }
 
 
-/* Stop advertising & destroy the SVCXPRTs, releasing the ports */
+// static void unregister_transport(SVCXPRT **transp){
+//     // same as the comment above
+//     if (transp && *transp) {
+//         xprt_unregister(*transp);
+//         int fd = (*transp)->xp_fd;
+//         if (fd >= 0) (void)shutdown(fd, SHUT_RDWR);
+//         svc_destroy(*transp);
+//         *transp = NULL;
+//     }
+// }
+
 static void unregister_nfs_service(SVCXPRT **udptransp, SVCXPRT **tcptransp)
 {
     /* 2) Remove transports from the svc polling set so no new work arrives */
@@ -1240,47 +1250,11 @@ static void unregister_nfs_service(SVCXPRT **udptransp, SVCXPRT **tcptransp)
     // svc_exit();  /* no-op if not in svc_run() */
 }
 
-static void unregister_mount_service(SVCXPRT **udptransp, SVCXPRT **tcptransp)
-{
-    /* 1) Unregister from rpcbind/portmapper so others can claim the prognum */
-    rpcb_unset_all(MOUNTPROG, MOUNTVERS1);
-    rpcb_unset_all(MOUNTPROG, MOUNTVERS3);
-
-    /* 2) Remove transports from the svc polling set so no new work arrives */
-    if (udptransp && *udptransp) xprt_unregister(*udptransp);
-    if (tcptransp && *tcptransp) xprt_unregister(*tcptransp);
-
-    /* 3) Proactively shutdown listening sockets (optional but immediate) */
-    if (udptransp && *udptransp) {
-        int fd = (*udptransp)->xp_fd;
-        if (fd >= 0) (void)shutdown(fd, SHUT_RDWR);
-    }
-    if (tcptransp && *tcptransp) {
-        int fd = (*tcptransp)->xp_fd;
-        if (fd >= 0) (void)shutdown(fd, SHUT_RDWR);
-    }
-
-    /* 4) Destroy SVCXPRTs; libtirpc will close() fds and free resources */
-    if (udptransp && *udptransp) { svc_destroy(*udptransp); *udptransp = NULL; }
-    if (tcptransp && *tcptransp) { svc_destroy(*tcptransp); *tcptransp = NULL; }
-
-    /* 5) If you’re inside svc_run(), break the loop so teardown completes */
-    // svc_exit();  /* no-op if not in svc_run() */
-}
 
 /* Take over NFS and MOUNT services when this node becomes leader */
 static void become_leader(void)
 {
-    logmsg(LOG_CRIT, "Leadership acquired, registering NFS and MOUNT services");
-
-    // if (nfs_udptransp)
-    //     svc_destroy(nfs_udptransp);
-    // if (nfs_tcptransp)
-    //     svc_destroy(nfs_tcptransp);
-    // if (mount_udptransp && mount_udptransp != nfs_udptransp)
-    //     svc_destroy(mount_udptransp);
-    // if (mount_tcptransp && mount_tcptransp != nfs_tcptransp)
-    //     svc_destroy(mount_tcptransp);
+    logmsg(LOG_CRIT, "Leadership acquired by %d, registering NFS and MOUNT services", opt_raft_id);
 
     if (!opt_tcponly)
         nfs_udptransp = create_udp_transport(opt_nfs_port);
@@ -1304,57 +1278,30 @@ static void become_leader(void)
 
     logmsg(LOG_INFO, "Leader binding MOUNT service to port %d", opt_mount_port);
     register_mount_service(mount_udptransp, mount_tcptransp);
-
-
-    /* NFS transports */
-    // if (!opt_tcponly)
-    //     udptransp = create_udp_transport(opt_nfs_port);
-    // tcptransp = create_tcp_transport(opt_nfs_port);
-
-    // nfs_udptransp = udptransp;
-    // nfs_tcptransp = tcptransp;
-    
-    // logmsg(LOG_INFO, "NFS server starting on port %d", opt_nfs_port);
-    // register_nfs_service(nfs_udptransp, nfs_tcptransp);
-
-    // /* MOUNT transports. If ports are equal, then the MOUNT service can reuse
-    // the NFS transports. */
-    // if (opt_mount_port != opt_nfs_port) {
-    //     if (!opt_tcponly)
-    //         udptransp = create_udp_transport(opt_mount_port);
-    //     tcptransp = create_tcp_transport(opt_mount_port);
-    // }
-
-    // mount_udptransp = (opt_mount_port != opt_nfs_port) ? udptransp : nfs_udptransp;
-    // mount_tcptransp = (opt_mount_port != opt_nfs_port) ? tcptransp : nfs_tcptransp;
-    
-    // logmsg(LOG_INFO, "MOUNT server starting on port %d", opt_mount_port);
-
-    // register_mount_service(mount_udptransp, mount_tcptransp);
 }
 
 
 static void leadership_lost(void)
 {
-    logmsg(LOG_CRIT, "Leadership lost, unregistering NFS and MOUNT services");
+    logmsg(LOG_CRIT, "Leadership lost by %d, unregistering NFS and MOUNT services", opt_raft_id);
 
-    // if (nfs_udptransp)
-    //     svc_destroy(nfs_udptransp);
-    // if (nfs_tcptransp)
-    //     svc_destroy(nfs_tcptransp);
-    // if (mount_udptransp && mount_udptransp != nfs_udptransp)
-    //     svc_destroy(mount_udptransp);
-    // if (mount_tcptransp && mount_tcptransp != nfs_tcptransp)
-    //     svc_destroy(mount_tcptransp);
 
-    // nfs_udptransp = NULL;
-    // nfs_tcptransp = NULL;
-    // mount_udptransp = NULL;
-    // mount_tcptransp = NULL;
+    // unregister_transport(&nfs_tcptransp);
+    // if(opt_tcponly) {
+    //     unregister_transport(&nfs_udptransp);
+    // }
+
+    // if(opt_mount_port != opt_nfs_port) {
+    //     unregister_transport(&mount_tcptransp);
+    //     if(opt_tcponly) {
+    //         unregister_transport(&mount_udptransp);
+    //     }
+    // } else {
+    //     mount_udptransp = NULL;
+    //     mount_tcptransp = NULL;
+    // }
 
     unregister_nfs_service(&nfs_udptransp, &nfs_tcptransp);
-    // unregister_mount_service(mount_udptransp, mount_tcptransp);
-
 }
 
 
@@ -1392,7 +1339,7 @@ static void unfs3_svc_run(void)
                 pollfds[i].revents = 0;
             }
 
-            r = poll(pollfds, svc_max_pollfd, mytimout);
+            r = poll(pollfds, svc_max_pollfd, timeout_ms);
             if (r < 0) {
                 if (errno == EINTR) {
                     continue;
@@ -1403,35 +1350,32 @@ static void unfs3_svc_run(void)
                 svc_getreq_poll(pollfds, r);
         } else {
             /* Nothing to poll, sleep for a while */
-            usleep(mytimout * 1000);
+            usleep(timeout_ms * 1000);
         }
-        
+
+        raft_make_progress(); 
+
         if(was_leader && raft_disabled) {
             logmsg(LOG_CRIT, "Raft disabled, stepping down from leadership");
             raft_become_follower(raft_srv);
-            logmsg(LOG_CRIT, "Leadership lost, unregistering services");
             leadership_lost();
             is_leader_now = 0;
             was_leader = 0;
-        }
+        } else {
+            is_leader_now = raft_is_leader(raft_srv);
 
-        raft_periodic(raft_srv, mytimout);
-        raft_net_receive();            
-        is_leader_now = raft_is_leader(raft_srv);
-        
-        if (is_leader_now) {
-            if (!was_leader) {
-                logmsg(LOG_CRIT, "Leadership acquired, registering services");
+            if (is_leader_now && !was_leader) {
                 become_leader();
+            } else if(!is_leader_now && was_leader) {
+                leadership_lost();
             }
-        } else if(was_leader) {
-            logmsg(LOG_CRIT, "Leadership lost, unregistering services");
-            leadership_lost();
+
+            was_leader = is_leader_now;
+            print_leader_info(); 
         }
 
-        was_leader = is_leader_now;
 
-        print_leader_info(); 
+
 #else
         readfds = svc_fdset;
         tv.tv_sec = 1;
@@ -1441,6 +1385,9 @@ static void unfs3_svc_run(void)
            readfds should never be empty, since we always have our listen
            socket. Well, at least hope that our Windows RPC library works
            like that. oncrpc-ms does. */
+
+
+        
         switch (select(FD_SETSIZE, &readfds, NULL, NULL, &tv)) {
             case -1:
                 if (errno == EINTR) {
@@ -1455,30 +1402,11 @@ static void unfs3_svc_run(void)
                 svc_getreqset(&readfds);
         }
         
-        raft_periodic(raft_srv, mytimout);
-        raft_net_receive();            
-        is_leader_now = raft_is_leader(raft_srv);
-        
-        if (is_leader_now) {
-            if (!was_leader) {
-                logmsg(LOG_CRIT, "Leadership acquired, registering services");
-                become_leader();
-            }
-            else if(raft_disabled) {
-                logmsg(LOG_CRIT, "Raft disabled, stepping down from leadership");
-                raft_become_follower(raft_srv);
-                logmsg(LOG_CRIT, "Leadership lost, unregistering services");
-                leadership_lost();
-                is_leader_now = 0;
-            }
-        } else if(was_leader) {
-            logmsg(LOG_CRIT, "Leadership lost, unregistering services");
-            leadership_lost();
-        }
+        logmsg(LOG_CRIT, "THIS MODE IS ASSUMED TO BE NOT REACHED");
+        fflush(stderr);
+        fflush(stdout); 
+        exit(0);
 
-        was_leader = is_leader_now;
-
-        print_leader_info(); 
     #endif
     }
 
@@ -1589,7 +1517,7 @@ int main(int argc, char **argv)
     create_pid_file();
 
     raft_init();
-    raft_set_election_timeout(raft_srv, (opt_raft_id) * mytimout + mytimout);
+    raft_set_election_timeout(raft_srv, (opt_raft_id + 1) * timeout_ms);
     wait_for_leader();
     was_leader = raft_is_leader(raft_srv);
     is_leader_now = was_leader;

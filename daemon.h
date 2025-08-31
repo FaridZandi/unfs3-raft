@@ -25,7 +25,7 @@ void daemon_exit(int);
 void logmsg(int, const char *, ...);
 
 
-#define mytimout 100.0 /* 1 second timeout for svc_getreqset() */
+#define timeout_ms 100 
 
 /* remote address */
 int get_remote(struct svc_req *, struct in6_addr *);

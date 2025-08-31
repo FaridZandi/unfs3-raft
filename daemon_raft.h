@@ -36,6 +36,8 @@ int raft_serialize_and_replicate_nfs_op(struct svc_req *rqstp,
                                          xdrproc_t _xdr_argument, 
                                          void *argument);
 
+void raft_make_progress();  
+
 
 // some helper functions for debugging
 const char *nfs3_proc_name(u_long proc); 

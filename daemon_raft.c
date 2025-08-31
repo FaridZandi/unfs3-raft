@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <endian.h>
 #include <stdint.h>
+#include <time.h>
 
 #include "daemon.h"
 #include "raft_log.h"
@@ -48,6 +49,7 @@ struct raft_peer {
 static struct raft_peer raft_peers[16];
 static int raft_peer_count = 0;
 
+static struct timespec last_progress_time = {0, 0};
 
 
 static struct raft_peer* raft_peer_from_addr(struct sockaddr_in* addr) {
@@ -143,9 +145,8 @@ void wait_for_leader(void)
     logmsg(LOG_INFO, "waiting for Raft leader election");
     
     while (raft_get_current_leader(raft_srv) == -1) {
-        raft_periodic(raft_srv, mytimout);
-        raft_net_receive();
-        usleep(mytimout * 1000); 
+        usleep(timeout_ms * 1000);
+        raft_make_progress(); 
     }
 
     int leader = raft_get_current_leader(raft_srv);
@@ -176,91 +177,133 @@ void print_leader_info(void){
 }
 
 
+
+void raft_make_progress() {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+
+    long elapsed_ms = 0;
+    if (last_progress_time.tv_sec != 0 || last_progress_time.tv_nsec != 0) {
+        elapsed_ms = (now.tv_sec - last_progress_time.tv_sec) * 1000 +
+                     (now.tv_nsec - last_progress_time.tv_nsec) / 1000000;
+    } else {
+        logmsg(LOG_CRIT, "This isn't supposed to be happening");
+        usleep(timeout_ms * 1000);
+        elapsed_ms = timeout_ms;
+    }
+
+    logmsg(LOG_DEBUG, "raft_make_progress: elapsed_ms = %ld", elapsed_ms);
+
+    raft_periodic(raft_srv, elapsed_ms > 0 ? elapsed_ms : timeout_ms);
+    raft_net_receive();
+
+    last_progress_time = now;
+}
+
+
+
 int raft_serialize_and_replicate_nfs_op(struct svc_req *rqstp, 
                                          struct in6_addr remote_addr, 
                                          xdrproc_t _xdr_argument, 
                                          void *argument) {
-    if (raft_is_leader(raft_srv)) {
-
-        // flush any pending logs
-        raft_apply_all(raft_srv);
-
-
-        u_int arg_len = xdr_sizeof(_xdr_argument, (char *)argument);
-        if (arg_len > 0) {
-            size_t info_size = sizeof(raft_client_info_t);
-            size_t proc_size = sizeof(uint32_t);
-            size_t total_size = proc_size + info_size + arg_len;
-
-            char *buf = malloc(total_size);
-            if (buf) {
-                size_t offset = 0;
-
-                uint32_t proc = htonl(rqstp->rq_proc);
-                memcpy(buf + offset, &proc, proc_size);
-                offset += proc_size;
-
-                raft_client_info_t info = {0};
-                info.addr = remote_addr;
-                if (rqstp->rq_cred.oa_flavor == AUTH_UNIX) {
-                    struct authunix_parms *auth = (struct authunix_parms *)rqstp->rq_clntcred;
-                    info.uid = auth->aup_uid;
-                    info.gid = auth->aup_gid;
-                    info.gid_len = auth->aup_len;
-                    for (u_int i = 0; i < auth->aup_len && i < NGRPS; i++)
-                        info.gids[i] = auth->aup_gids[i];
-                }
-
-                int written = raft_client_info_serialize(&info, (uint8_t *)(buf + offset), info_size);
-                if (written != info_size) {
-                    logmsg(LOG_ERR, "Serialization of raft_client_info_t failed");
-                    free(buf);
-                    return;
-                }
-
-
-                offset += info_size;
-
-                XDR xdrs;
-                xdrmem_create(&xdrs, buf + offset, arg_len, XDR_ENCODE);
-                if (((xdrproc_t)_xdr_argument)(&xdrs, (char *)argument)) {
-                    msg_entry_t ety = {0};
-                    ety.data.buf = buf;
-                    ety.data.len = offset + arg_len;
-                    ety.id = raft_get_current_idx(raft_srv) + 1;
-                    ety.type = RAFT_LOGTYPE_NORMAL;
-
-                    msg_entry_response_t resp;
-                    if (0 == raft_recv_entry(raft_srv, &ety, &resp)) {
-                        logmsg(LOG_CRIT, "Logged operation %s as log idx %ld",
-                               nfs3_proc_name(rqstp->rq_proc), resp.idx);
-                        
-                        while (raft_get_commit_idx(raft_srv) < resp.idx) {
-                            if (raft_disabled){
-                                return 1; 
-                            }
-                            sleep(mytimout / 1000);
-                            raft_periodic(raft_srv, mytimout);
-                            raft_net_receive();
-                        }
-                    }
-                }
-                xdr_destroy(&xdrs);
-                
-                // NOTE: Freeing the buffer at this point will cause the operations 
-                // to be received incorrectly by the followers. Can't fully understand why. 
-                 
-                // free(buf); 
-            }
-        }
-
-        // apply all committed entries to state machine
-        raft_apply_all(raft_srv);
-    } else {
+    if (!raft_is_leader(raft_srv)) {
         logmsg(LOG_CRIT, "Not the leader, cannot replicate operation %s",
                 nfs3_proc_name(rqstp->rq_proc));
         return 1;
     }
+    // flush any pending logs
+    raft_apply_all(raft_srv);
+
+
+    u_int arg_len = xdr_sizeof(_xdr_argument, (char *)argument);
+    if (arg_len > 0) {
+        size_t info_size = sizeof(raft_client_info_t);
+        size_t proc_size = sizeof(uint32_t);
+        size_t total_size = proc_size + info_size + arg_len;
+
+        char *buf = malloc(total_size);
+
+        if (!buf) {
+            logmsg(LOG_CRIT, "Failed to allocate memory for replication buffer");
+            return 2;
+        }
+        size_t offset = 0;
+        
+
+        // part 1: serialize procedure number. 
+        uint32_t proc = htonl(rqstp->rq_proc);
+        memcpy(buf + offset, &proc, proc_size);
+        offset += proc_size;
+        
+
+        // part 2: serialize client information. Currently not used much. 
+        raft_client_info_t info = {0};
+        info.addr = remote_addr;
+        if (rqstp->rq_cred.oa_flavor == AUTH_UNIX) {
+            struct authunix_parms *auth = (struct authunix_parms *)rqstp->rq_clntcred;
+            info.uid = auth->aup_uid;
+            info.gid = auth->aup_gid;
+            info.gid_len = auth->aup_len;
+            for (u_int i = 0; i < auth->aup_len && i < NGRPS; i++)
+                info.gids[i] = auth->aup_gids[i];
+        }
+        int written = raft_client_info_serialize(&info, (uint8_t *)(buf + offset), info_size);
+        if (written != info_size) {
+            logmsg(LOG_CRIT, "Serialization of raft_client_info_t failed");
+            free(buf);
+            return 2; 
+        }
+        offset += info_size;
+
+
+
+        // part 3: serialize the actual arguments
+        XDR xdrs;
+        xdrmem_create(&xdrs, buf + offset, arg_len, XDR_ENCODE);
+        if (!((xdrproc_t)_xdr_argument)(&xdrs, (char *)argument)) {
+            logmsg(LOG_CRIT, "Serialization of arguments failed");
+            xdr_destroy(&xdrs);
+            free(buf);
+            return 2;
+        }
+
+        // Serialized data is ready, send it to the followers
+        msg_entry_t ety = {0};
+        ety.data.buf = buf;
+        ety.data.len = offset + arg_len;
+        ety.id = raft_get_current_idx(raft_srv) + 1;
+        ety.type = RAFT_LOGTYPE_NORMAL;
+
+        msg_entry_response_t resp;
+        if (raft_recv_entry(raft_srv, &ety, &resp) != 0) {
+            logmsg(LOG_CRIT, "Failed to receive entry response");
+            free(buf);
+            return 2;
+        }
+
+        logmsg(LOG_CRIT, "Logged operation %s as log idx %ld",
+                nfs3_proc_name(rqstp->rq_proc), resp.idx);
+        
+
+        while (raft_get_commit_idx(raft_srv) < resp.idx) {
+            if (raft_disabled){
+                return 1; 
+            }
+
+            usleep(timeout_ms * 1000);
+            raft_make_progress();
+        }
+
+        xdr_destroy(&xdrs);
+
+        // NOTE: Freeing the buffer at this point will cause the operations 
+        // to be received incorrectly by the followers. Need to happen later.  
+        // free(buf); 
+    }
+
+    // apply all committed entries to state machine
+    raft_apply_all(raft_srv);
+    return 0; 
 }
 
 
@@ -1299,6 +1342,7 @@ static int raft_applylog_cb(raft_server_t* raft,
 
 void raft_init(void) {
     // initialize raft server
+    clock_gettime(CLOCK_MONOTONIC, &last_progress_time);
     raft_srv = raft_new();
 
     // set raft callbacks
