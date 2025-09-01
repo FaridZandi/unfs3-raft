@@ -219,13 +219,9 @@ unfs3_fh_t fh_comp_raw(const char *path, struct svc_req *rqstp, int need_dir)
         return invalid_fh;
 
     fh.dev = buf.st_dev;
-    logmsg(LOG_DEBUG, "fh_comp_raw: dev=%u ino=%llu gen=%u",
-           fh.dev, (unsigned long long)buf.st_ino,
-           backend_get_gen(buf, FD_NONE, path));    
-           
     fh.ino = buf.st_ino;
     fh.gen = backend_get_gen(buf, FD_NONE, path);
-    
+
     /* special case for root directory */
     if (strcmp(path, "/") == 0)
         return fh;
@@ -294,9 +290,6 @@ unfs3_fh_t *fh_extend(nfs_fh3 nfh, uint32 dev, uint64 ino, uint32 gen)
         return NULL;
 
     new.dev = dev;
-    logmsg(LOG_DEBUG, "fh_extend: dev=%u ino=%llu gen=%u",
-           new.dev, (unsigned long long)ino, gen);
-
     new.ino = ino;
     new.gen = gen;
     new.pwhash = export_password_hash;

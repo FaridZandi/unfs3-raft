@@ -25,9 +25,6 @@
 #include <string.h>
 #include <unistd.h>
 #include <utime.h>
-#include <syslog.h>
-
-
 #ifndef WIN32
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -52,7 +49,6 @@
 #include "backend.h"
 #include "Config/exports.h"
 #include "Extras/cluster.h"
-
 
 /*
  * decompose filehandle and switch user if permitted access
@@ -593,36 +589,7 @@ CREATE3res *nfsproc3_create_3_svc(CREATE3args * argp, struct svc_req * rqstp)
     return &result;
 }
 
-#define FH_MAXBUF 64
-
-static void fh_to_hex(const nfs_fh3 *fh, char *out)
-{
-    size_t len = fh->data.data_len;
-    const unsigned char *d = (const unsigned char *)fh->data.data_val;
-    size_t i;
-    for (i = 0; i < len && i < FH_MAXBUF; i++)
-    {
-        // logmsg(LOG_DEBUG, "fh_to_hex: byte %zu = %02x", i, d[i]);
-        sprintf(out + i * 2, "%02x", d[i]);
-    }
-    // logmsg(LOG_DEBUG, "fh_to_hex: total length = %zu", len);
-    out[i * 2] = '\0';
-    // logmsg(LOG_DEBUG, "fh_to_hex: hex string = %s", out);   
-}
-
-const char *fh_to_hexstr(const nfs_fh3 *fh)
-{
-    // Each byte = 2 hex digits, plus null terminator
-    // char hexbuf[FH_MAXBUF * 2 + 1];
-    char *hexbuf = malloc(FH_MAXBUF * 2 + 1);
-    fh_to_hex(fh, hexbuf);
-    // logmsg(LOG_DEBUG, "fh_to_hexstr: hex string = %s", hexbuf);
-    
-    return hexbuf;
-}
-
-
-MKDIR3res *nfsproc3_mkdir_3_svc(MKDIR3args *argp, struct svc_req *rqstp)
+MKDIR3res *nfsproc3_mkdir_3_svc(MKDIR3args * argp, struct svc_req * rqstp)
 {
     static MKDIR3res result;
     char *path;
@@ -631,41 +598,23 @@ MKDIR3res *nfsproc3_mkdir_3_svc(MKDIR3args *argp, struct svc_req *rqstp)
     char obj[NFS_MAXPATHLEN];
     int res;
 
-    logmsg(LOG_INFO, "MKDIR called: dir handle=%s, name=%s", 
-           fh_to_hexstr(&argp->where.dir), argp->where.name);
-
     PREP(path, argp->where.dir);
-
-    logmsg(LOG_INFO, "Creating full path for new directory: %s/%s",
-           path, argp->where.name); 
-    fflush(stdout); 
-    
     pre = get_pre_cached();
+    result.status =
+        join3(cat_name(path, argp->where.name, obj),
+              atomic_attr(argp->attributes), exports_rw());
 
-    logmsg(LOG_INFO, "Creating full path for new directory...");
-    int join_status = join3(cat_name(path, argp->where.name, obj),
-                            atomic_attr(argp->attributes), exports_rw());
-
-    result.status = join_status;
-    logmsg(LOG_INFO, "join3() result: status=%d, path=%s", join_status, obj);
-
-    logmsg(LOG_INFO, "Attempting cluster_create for %s", obj);
     cluster_create(obj, rqstp, &result.status);
 
     if (result.status == NFS3_OK) {
-        logmsg(LOG_INFO, "Calling backend_mkdir(%s, ...)", obj);
         res = backend_mkdir(obj, create_mode(argp->attributes));
-        if (res == -1) {
-            logmsg(LOG_INFO, "backend_mkdir failed for %s", obj);
+        if (res == -1)
             result.status = mkdir_err();
-        } else {
-            logmsg(LOG_INFO, "Directory created successfully at %s", obj);
+        else {
             result.MKDIR3res_u.resok.obj =
                 fh_extend_type(argp->where.dir, obj, S_IFDIR);
             result.MKDIR3res_u.resok.obj_attributes = get_post_cached(rqstp);
         }
-    } else {
-        logmsg(LOG_INFO, "Failed to create directory: status=%d, path=%s", result.status, obj);
     }
 
     post = get_post_attr(path, argp->where.dir, rqstp);
@@ -674,11 +623,8 @@ MKDIR3res *nfsproc3_mkdir_3_svc(MKDIR3args *argp, struct svc_req *rqstp)
     result.MKDIR3res_u.resok.dir_wcc.before = pre;
     result.MKDIR3res_u.resok.dir_wcc.after = post;
 
-    logmsg(LOG_INFO, "Returning MKDIR3res with status=%d", result.status);
-
     return &result;
 }
-
 
 SYMLINK3res *nfsproc3_symlink_3_svc(SYMLINK3args * argp,
                                     struct svc_req * rqstp)
