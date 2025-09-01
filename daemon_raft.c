@@ -1385,11 +1385,6 @@ static int raft_applylog_cb(raft_server_t* raft,
     logmsg(LOG_DEBUG, "raft: apply log callback called, idx %lu, term %llu",
            (unsigned long)entry_idx, (unsigned long long)entry->term);
 
-    // if (raft_is_leader(raft_srv)){
-        // logmsg(LOG_CRIT, "raft: skipping applylog on leader idx %lu", (unsigned long)entry_idx);
-        // return 0;
-    // }
-
     // Buffer must be large enough for proc and info header
     size_t proc_size = sizeof(uint32_t);
     size_t info_size = sizeof(raft_client_info_t);
@@ -1430,8 +1425,8 @@ static int raft_applylog_cb(raft_server_t* raft,
                                     (char*)entry->data.buf + offset,
                                     entry->data.len - offset);
 
-                                    /* Store the result for later retrieval by the client facing function. a simple example
-     * using a ring buffer. replace with something more sophisticated later on. */
+    /* Store the result for later retrieval by the client facing function. A simple example
+     * here using a ring buffer. replace with something more sophisticated later on. */
     put_result(entry_idx, result);
 
 

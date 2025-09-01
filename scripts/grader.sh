@@ -44,6 +44,7 @@ sleep 5
 echo "making replica 1 responsive"
 kill -SIGUSR1 $replica1_pid
 
+
 # wait for the tests to finish
 wait
 

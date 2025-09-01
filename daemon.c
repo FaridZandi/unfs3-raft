@@ -56,7 +56,6 @@
 #include "backend.h"
 #include "Config/exports.h"
 #include "raft_log.h"
-#include "handle_log.h"
 #include "raft.h"
 
 #include <endian.h>      // htobe64, be64toh
@@ -92,7 +91,6 @@ struct in6_addr opt_bind_addr;
 int opt_readable_executables = FALSE;
 char *opt_pid_file = NULL;
 int opt_32_bit_truncate = FALSE;
-char *opt_handle_log = "handle.log";
 
 char *my_mount_root = NULL; // Mount root for this instance
 char *logical_mount_root = NULL; // Logical mount root for this instance
@@ -279,7 +277,7 @@ static void remove_pid_file(void)
 static void parse_options(int argc, char **argv)
 {
     int opt = 0;
-    char *optstring = "3bcC:de:E:hl:m:n:prstTuwi:R:H:I:P:g:G:";
+    char *optstring = "3bcC:de:E:hl:m:n:prstTuwi:R:I:P:g:G:";
 
 #if defined(WIN32) || defined(AFS_SUPPORT)
     /* Allways truncate to 32 bits in these cases */
@@ -357,7 +355,6 @@ static void parse_options(int argc, char **argv)
                 ("\t-3          truncate fileid and cookie to 32 bits\n");
                 printf("\t-T          test exports file and exit\n");
                 printf("\t-R <file>   path to raft log\n");
-                printf("\t-H <file>   path to handle log\n");
                 printf("\t-I <id>     raft node id\n");
                 printf("\t-P <ids>    comma separated raft peer ids\n");
                 // defined these in daemon.h
@@ -431,9 +428,6 @@ static void parse_options(int argc, char **argv)
             case 'R':
                 opt_raft_log = optarg;
                 break;
-            case 'H':
-                opt_handle_log = optarg;
-                break;
             case 'I':
                 opt_raft_id = atoi(optarg);
                 break;
@@ -498,7 +492,6 @@ void daemon_exit(int error)
     remove_pid_file();
     backend_shutdown();
     raft_log_close();
-    handle_log_close();
     if (raft_srv)
         raft_free(raft_srv);
 
@@ -1509,7 +1502,6 @@ int main(int argc, char **argv)
     is_leader_now = was_leader;
 
     raft_log_init(opt_raft_log);
-    handle_log_init(opt_handle_log);
     
     /* init write verifier */
     regenerate_write_verifier();

@@ -1,17 +1,5 @@
 #!/usr/bin/env bash
-#
-# start-nfs.sh  —  Launch multiple UNFS3 daemons
-#
-#   sudo ./start-nfs.sh <num-instances> [size-MiB]
-#
-#   • creates per-instance directories:  inst1/ inst2/ …
-#   • puts   fs.img, exports, handle.log, raft.log, unfsd.pid   in each dir
-#   • mounts each img on  /srv/nfs/shared<i>
-#   • starts unfsd with   -e -H -R -i -n -m  pointing at those files
-#   • passes       -I <id>  -P <peer-list>   (RAFT node-id & peers)
-#
-# REQUIREMENTS: unfsd (UNFS3), losetup, mkfs.ext4, mount.  Run as root
-#               or grant the script CAP_SYS_ADMIN & CAP_NET_BIND_SERVICE.
+
 
 set -euo pipefail
 
@@ -70,7 +58,6 @@ for i in $(seq 0 "$NUM"); do
 
     img=$instdir/fs.img
     exports=$instdir/exports
-    handle=$instdir/handle.log
     raft=$instdir/raft.log
     pidfile=$instdir/unfsd.pid
 
@@ -124,7 +111,6 @@ for i in $(seq 0 "$NUM"); do
             -i "$pidfile" # pid file to help stop the instance later 
             -n "$nfs_port" # NFS port
             -m "$mnt_port" # mount port
-            -H "$handle" # all the handles generated logged here
             -R "$raft" # all raft logs will permanently be here
             -I "$node_id" # node ID for RAFT. unique per instance
             -P "$peers" # peer list for RAFT (comma-separated IDs of other nodes)
