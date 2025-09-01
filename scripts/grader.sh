@@ -25,7 +25,7 @@ echo "waiting for 2 seconds to let the election settle"
 sleep 2
 
 echo "running tests, output in $test_results_path"
-python -u main-a.py --file-count 40 --loop-delay 1 | tee -a "$test_results_path" &
+python -u main-a.py --file-count 20 --loop-delay 0.5 | tee -a "$test_results_path" &
 
 echo "waiting for 10 seconds to let tests start"
 sleep 5

@@ -34,6 +34,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <errno.h>
+#include <unistd.h>
 #ifdef HAVE_LIBPROC_H
 #include <libproc.h>
 #endif
@@ -57,11 +58,7 @@
 #include "Config/exports.h"
 #include "raft_log.h"
 #include "raft.h"
-
-#include <endian.h>      // htobe64, be64toh
-
 #include "daemon_raft.h"
-#include <rpc/auth_unix.h>
 #ifndef SIG_PF
 #define SIG_PF void(*)(int)
 #endif
@@ -107,8 +104,9 @@ volatile sig_atomic_t raft_disabled = 0;
 /* Register with portmapper? */
 int opt_portmapper = TRUE;
 
-
-
+/*
+ * output message to syslog or stdout
+ */
 void logmsg(int prio, const char *fmt, ...)
 {
     va_list ap;
@@ -134,8 +132,6 @@ void logmsg(int prio, const char *fmt, ...)
     }
     va_end(ap);
 }
-
-
 
 /*
  * return remote address from svc_req structure
@@ -698,22 +694,13 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
 
             result = raft_serialize_and_replicate_nfs_op(rqstp, remote_addr, 
                                                         _xdr_argument, &argument);
-
+            
             if (result == NULL) {
                 logmsg(LOG_CRIT, "Failed to replicate operation %s",
                           nfs3_proc_name(rqstp->rq_proc));
             }
             break;
     }
-
-    if (result == NULL) {
-        logmsg(LOG_ERR, "NFS operation %s failed for %s",
-               nfs3_proc_name(rqstp->rq_proc), remote_host);
-    } else {
-        logmsg(LOG_INFO, "NFS operation %s succeeded for %s",
-               nfs3_proc_name(rqstp->rq_proc), remote_host);
-    }
-
 
     if (result != NULL &&
         !svc_sendreply(transp, (xdrproc_t) _xdr_result, result)) {
@@ -724,7 +711,6 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
         (transp, (xdrproc_t) _xdr_argument, (caddr_t) & argument)) {
         logmsg(LOG_CRIT, "Unable to free XDR arguments");
     }
-
     return;
 }
 
@@ -798,12 +784,7 @@ static void mountprog_3(struct svc_req *rqstp, register SVCXPRT * transp)
         svcerr_decode(transp);
         return;
     }
-
-    logmsg(LOG_CRIT, "received MOUNT operation %s",
-           mountproc_name(rqstp->rq_proc));
-
     result = (*local) ((char *) &argument, rqstp);
-
     if (result != NULL &&
         !svc_sendreply(transp, (xdrproc_t) _xdr_result, result)) {
         svcerr_systemerr(transp);
@@ -885,7 +866,6 @@ static void _register_service(SVCXPRT *transp,
     }
 
     if (!svc_reg(transp, prognum, versnum, dispatch, nconf)) {
-            
         fprintf(stderr, "Unable to register (%s, %s, %s).\n",
                 progname, versname, netid);
         daemon_exit(0);
@@ -1234,35 +1214,35 @@ static void unfs3_svc_run(void)
 
 #if defined(HAVE_SVC_GETREQ_POLL) && HAVE_DECL_SVC_POLLFD
 
-        if (svc_max_pollfd > 0) {
-            if (pollfds_len != svc_max_pollfd) {
-                pollfds = realloc(pollfds, sizeof(struct pollfd) * svc_max_pollfd);
-                if (pollfds == NULL) {
-                    perror("unfs3_svc_run: realloc failed");
-                    return;
-                }
-                pollfds_len = svc_max_pollfd;
-            }
-
-            for (int i = 0; i < svc_max_pollfd; i++) {
-                pollfds[i].fd = svc_pollfd[i].fd;
-                pollfds[i].events = svc_pollfd[i].events;
-                pollfds[i].revents = 0;
-            }
-
-            r = poll(pollfds, svc_max_pollfd, timeout_ms);
-            if (r < 0) {
-                if (errno == EINTR) {
-                    continue;
-                }
-                perror("unfs3_svc_run: poll failed");
-                return;
-            } else if (r)
-                svc_getreq_poll(pollfds, r);
-        } else {
-            /* Nothing to poll, sleep for a while */
+        if (svc_max_pollfd == 0) {
             usleep(timeout_ms * 1000);
+        } else { ///////////// original code //// 
+        if (pollfds_len != svc_max_pollfd) {
+            pollfds = realloc(pollfds, sizeof(struct pollfd) * svc_max_pollfd);
+            if (pollfds == NULL) {
+                perror("unfs3_svc_run: realloc failed");
+                return;
+            }
+            pollfds_len = svc_max_pollfd;
         }
+
+        for (int i = 0; i < svc_max_pollfd; i++) {
+            pollfds[i].fd = svc_pollfd[i].fd;
+            pollfds[i].events = svc_pollfd[i].events;
+            pollfds[i].revents = 0;
+        }
+
+        r = poll(pollfds, svc_max_pollfd, timeout_ms);
+        if (r < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            perror("unfs3_svc_run: poll failed");
+            return;
+        } else if (r)
+            svc_getreq_poll(pollfds, r);
+        ///////////// end original code ////     
+        } 
 
         raft_make_progress(); 
 
@@ -1296,9 +1276,6 @@ static void unfs3_svc_run(void)
            readfds should never be empty, since we always have our listen
            socket. Well, at least hope that our Windows RPC library works
            like that. oncrpc-ms does. */
-
-
-        
         switch (select(FD_SETSIZE, &readfds, NULL, NULL, &tv)) {
             case -1:
                 if (errno == EINTR) {
@@ -1318,7 +1295,7 @@ static void unfs3_svc_run(void)
         fflush(stdout); 
         exit(0);
 
-    #endif
+#endif
     }
 
 #if defined(HAVE_SVC_GETREQ_POLL) && HAVE_DECL_SVC_POLLFD
@@ -1428,11 +1405,10 @@ int main(int argc, char **argv)
     create_pid_file();
 
     raft_init();
-    raft_set_election_timeout(raft_srv, (opt_raft_id + 10) * election_timeout_ms);
-    wait_for_leader();
-    was_leader = raft_is_leader(raft_srv);
-    is_leader_now = was_leader;
-
+    int replica_election_timeout = (opt_raft_id + 10) * election_timeout_ms; 
+    logmsg(LOG_CRIT, "Setting election timeout to %d ms", replica_election_timeout);
+    raft_set_election_timeout(raft_srv, replica_election_timeout);
+    was_leader = is_leader_now = wait_for_leader();
     
     /* init write verifier */
     regenerate_write_verifier();

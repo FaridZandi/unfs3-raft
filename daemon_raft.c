@@ -191,7 +191,7 @@ char* time_str() {
 }
 
 /* Wait for leader election before starting NFS services */
-void wait_for_leader(void)
+int wait_for_leader(void)
 {
     logmsg(LOG_INFO, "waiting for Raft leader election");
     
@@ -205,8 +205,10 @@ void wait_for_leader(void)
     
     if (raft_is_leader(raft_srv)) {
         logmsg(LOG_INFO, "This node is the leader; binding to port 2049");
+        return 1; 
     } else {
         logmsg(LOG_INFO, "This node is a follower; waiting for leader to send requests");
+        return 0;
     } 
 }
 
@@ -1260,7 +1262,7 @@ static char* apply_nfs_operation(uint32_t proc, raft_client_info_t *info, char* 
 
 static int raft_send_requestvote_cb(raft_server_t* raft, void* udata, raft_node_t* node, msg_requestvote_t* msg) {
     if (raft_disabled)
-        return -1;
+        return 0;
 
     struct raft_peer *peer = raft_node_get_udata(node);
     if (!peer)
@@ -1290,7 +1292,7 @@ static int raft_send_appendentries_cb(raft_server_t* raft,
                                       raft_node_t* node, 
                                       msg_appendentries_t* msg) {
     if (raft_disabled)
-        return -1;
+        return 0;
 
     struct raft_peer *peer = raft_node_get_udata(node);
     if (!peer)

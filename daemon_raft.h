@@ -25,7 +25,7 @@ void raft_init(void);
 
 void raft_shutdown(void);
 
-void wait_for_leader(void);
+int wait_for_leader(void);
 
 void raft_make_progress(void);  
 

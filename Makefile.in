@@ -133,7 +133,8 @@ unfs3-$(VERSION).tar.gz:
 	 unfs3-$(VERSION)/contrib/nfsotpclient/nfsotpclient.py \
 	 unfs3-$(VERSION)/contrib/nfsotpclient/rpc.py \
 	 unfs3-$(VERSION)/contrib/rpcproxy/rpcproxy \
-	 unfs3-$(VERSION)/daemon.c daemon_raft.c \
+	 unfs3-$(VERSION)/daemon.c \
+	 unfs3-$(VERSION)/daemon_raft.c \
 	 unfs3-$(VERSION)/daemon.h \
 	 unfs3-$(VERSION)/doc/README.win \
 	 unfs3-$(VERSION)/doc/TODO \
