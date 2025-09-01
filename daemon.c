@@ -110,12 +110,8 @@ int opt_portmapper = TRUE;
 
 
 
-
-
 void logmsg(int prio, const char *fmt, ...)
 {
-    // return; 
-
     va_list ap;
 
 #if HAVE_VSYSLOG == 0
@@ -490,8 +486,6 @@ void daemon_exit(int error)
  */
 static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
 {
-    logmsg(LOG_INFO, "--------------------------------NFS OPERATION START---------------------------\n");
-
     union {
         GETATTR3args nfsproc3_getattr_3_arg;
         SETATTR3args nfsproc3_setattr_3_arg;
@@ -519,11 +513,12 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
     char *result;
     xdrproc_t _xdr_argument, _xdr_result;
     char *(*local) (char *, struct svc_req *);
+    
     struct in6_addr remote_addr;
     char remote_host[INET6_ADDRSTRLEN];
-
     get_remote(rqstp, &remote_addr);
     inet_ntop(AF_INET6, &remote_addr, remote_host, sizeof(remote_host));
+
     switch (rqstp->rq_proc) {
         case NFSPROC3_NULL:
             _xdr_argument = (xdrproc_t) xdr_void;
@@ -680,12 +675,12 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
             svcerr_noproc(transp);
             return;
     }
+
     memset((char *) &argument, 0, sizeof(argument));
     if (!svc_getargs(transp, (xdrproc_t) _xdr_argument, (caddr_t) & argument)) {
         svcerr_decode(transp);
         return;
     }
-
 
     logmsg(LOG_CRIT, "received operation %s", nfs3_proc_name(rqstp->rq_proc));
 
@@ -761,9 +756,9 @@ static void mountprog_3(struct svc_req *rqstp, register SVCXPRT * transp)
     char *result;
     xdrproc_t _xdr_argument, _xdr_result;
     char *(*local) (char *, struct svc_req *);
+
     struct in6_addr remote_addr;
     char remote_host[INET6_ADDRSTRLEN];
-
     get_remote(rqstp, &remote_addr);
     inet_ntop(AF_INET6, &remote_addr, remote_host, sizeof(remote_host));
 
