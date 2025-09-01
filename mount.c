@@ -261,9 +261,8 @@ mountres3 *mountproc_mnt_3_svc(dirpath * argp, struct svc_req * rqstp)
         return &result;
     }
 
-    if (
-        (exports_options(buf, rqstp, &password, NULL) == -1) || 
-        (!authenticated && password[0])
+    if ((exports_options(buf, rqstp, &password, NULL) == -1)
+        || (!authenticated && password[0])
         || (!(exports_opts & OPT_INSECURE) &&
             !IS_SECURE(ntohs(get_port(rqstp))))
        ) {
