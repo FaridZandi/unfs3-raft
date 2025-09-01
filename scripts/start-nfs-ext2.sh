@@ -106,7 +106,6 @@ for i in $(seq 1 "$NUM"); do
             -d # run in the foreground
             -p # disable portmapper
             -e "$exports" # exports file if normal instance
-            -E "$WORKDIR/global/exports"  # exports file for leader
             -i "$pidfile" # pid file to help stop the instance later 
             -n "$nfs_port" # NFS port
             -m "$mnt_port" # mount port

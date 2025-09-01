@@ -77,7 +77,6 @@ cookie3 rcookie = 0;
 /* options and default values */
 int opt_detach = TRUE;
 char *opt_exports = "/etc/exports";
-char *opt_exports_leader = "/etc/exports"; // Exports for the leader
 
 int opt_cluster = FALSE;
 char *opt_cluster_path = "/";
@@ -104,7 +103,6 @@ static SVCXPRT *mount_tcptransp = NULL;
 
 static int was_leader = 0;
 static int is_leader_now = 0;
-
 volatile sig_atomic_t raft_disabled = 0;
 
 /* Register with portmapper? */
@@ -277,7 +275,7 @@ static void remove_pid_file(void)
 static void parse_options(int argc, char **argv)
 {
     int opt = 0;
-    char *optstring = "3bcC:de:E:hl:m:n:prstTuwi:R:I:P:g:G:";
+    char *optstring = "3bcC:de:hl:m:n:prstTuwi:R:I:P:g:G:";
 
 #if defined(WIN32) || defined(AFS_SUPPORT)
     /* Allways truncate to 32 bits in these cases */
@@ -316,17 +314,6 @@ static void parse_options(int argc, char **argv)
 #endif
                 opt_exports = optarg;
                 break;
-            case 'E':   
-#ifndef WIN32
-                if (optarg[0] != '/') {
-                    /* A relative path won't work for re-reading the exports
-                       file on SIGHUP, since we are changing directory */
-                    fprintf(stderr, "Error: relative path to exports file\n");
-                    exit(1);
-                }
-#endif
-                opt_exports_leader = optarg;
-                break;
             case 'h':
                 printf(UNFS_NAME);
                 printf("Usage: %s [options]\n", argv[0]);
@@ -334,7 +321,6 @@ static void parse_options(int argc, char **argv)
                 printf("\t-u          use unprivileged port for services\n");
                 printf("\t-d          do not detach from terminal\n");
                 printf("\t-e <file>   file to use instead of /etc/exports\n");
-                printf("\t-E <file>   file to use instead of /etc/exports for leader\n");
                 printf("\t-i <file>   write daemon pid to given file\n");
 #ifdef WANT_CLUSTER
                 printf("\t-c          enable cluster extensions\n");
@@ -1193,40 +1179,20 @@ static SVCXPRT *create_tcp_transport(unsigned int port)
     return transp;
 }
 
-
-// static void unregister_transport(SVCXPRT **transp){
-//     // same as the comment above
-//     if (transp && *transp) {
-//         xprt_unregister(*transp);
-//         int fd = (*transp)->xp_fd;
-//         if (fd >= 0) (void)shutdown(fd, SHUT_RDWR);
-//         svc_destroy(*transp);
-//         *transp = NULL;
-//     }
-// }
-
-static void unregister_nfs_service(SVCXPRT **udptransp, SVCXPRT **tcptransp)
-{
-    /* 2) Remove transports from the svc polling set so no new work arrives */
-    if (udptransp && *udptransp) xprt_unregister(*udptransp);
-    if (tcptransp && *tcptransp) xprt_unregister(*tcptransp);
-
-    /* 3) Proactively shutdown listening sockets (optional but immediate) */
-    if (udptransp && *udptransp) {
-        int fd = (*udptransp)->xp_fd;
+static void unregister_transport(SVCXPRT **transp){
+    // same as the comment above
+    if (transp && *transp) {
+        xprt_unregister(*transp);
+        int fd = (*transp)->xp_fd;
         if (fd >= 0) (void)shutdown(fd, SHUT_RDWR);
+        svc_destroy(*transp);
+        *transp = NULL;
     }
-    if (tcptransp && *tcptransp) {
-        int fd = (*tcptransp)->xp_fd;
-        if (fd >= 0) (void)shutdown(fd, SHUT_RDWR);
-    }
+}
 
-    /* 4) Destroy SVCXPRTs; libtirpc will close() fds and free resources */
-    if (udptransp && *udptransp) { svc_destroy(*udptransp); *udptransp = NULL; }
-    if (tcptransp && *tcptransp) { svc_destroy(*tcptransp); *tcptransp = NULL; }
-
-    /* 5) If you’re inside svc_run(), break the loop so teardown completes */
-    // svc_exit();  /* no-op if not in svc_run() */
+static void unregister_nfs_service(SVCXPRT **udptransp, SVCXPRT **tcptransp){
+    unregister_transport(udptransp);
+    unregister_transport(tcptransp);
 }
 
 
@@ -1245,6 +1211,10 @@ static void become_leader(void)
     register_nfs_service(nfs_udptransp, nfs_tcptransp);
 
     if (opt_mount_port != opt_nfs_port) {
+
+        logmsg(LOG_CRIT, "This shouldn't happen. Or change the code such that handles this case.");
+        exit(1);
+
         if (!opt_tcponly)
             mount_udptransp = create_udp_transport(opt_mount_port);
         else
@@ -1260,26 +1230,8 @@ static void become_leader(void)
 }
 
 
-static void leadership_lost(void)
-{
+static void leadership_lost(void) {
     logmsg(LOG_CRIT, "Leadership lost by %d, unregistering NFS and MOUNT services", opt_raft_id);
-
-
-    // unregister_transport(&nfs_tcptransp);
-    // if(opt_tcponly) {
-    //     unregister_transport(&nfs_udptransp);
-    // }
-
-    // if(opt_mount_port != opt_nfs_port) {
-    //     unregister_transport(&mount_tcptransp);
-    //     if(opt_tcponly) {
-    //         unregister_transport(&mount_udptransp);
-    //     }
-    // } else {
-    //     mount_udptransp = NULL;
-    //     mount_tcptransp = NULL;
-    // }
-
     unregister_nfs_service(&nfs_udptransp, &nfs_tcptransp);
 }
 
