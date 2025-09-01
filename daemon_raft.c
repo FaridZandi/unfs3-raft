@@ -748,7 +748,7 @@ static void handle_appendentries_response(const struct raft_peer* peer,
                                           char* ptr);   
 
 // Main dispatcher:
-void raft_net_receive(void) {
+void raft_net_receive() {
     if (raft_disabled)
         return;
 
@@ -1200,7 +1200,7 @@ static char* apply_nfs_operation(uint32_t proc, raft_client_info_t *info, char* 
     if (!xdr_argument(&xdrs, (caddr_t)&argument)) {
         xdr_destroy(&xdrs);
         logmsg(LOG_ERR, "raft: failed to decode args for proc %u", proc);
-        return;
+        return NULL;
     }
     xdr_destroy(&xdrs);
 
@@ -1439,6 +1439,7 @@ void raft_init(void) {
     // initialize raft server
     clock_gettime(CLOCK_MONOTONIC, &last_progress_time);
     raft_srv = raft_new();
+    raft_log_init(opt_raft_log);
 
     // set raft callbacks
     raft_cbs.send_requestvote = raft_send_requestvote_cb;
@@ -1492,3 +1493,8 @@ void raft_init(void) {
     }
 }
 
+void raft_shutdown(void) {
+    raft_log_close();
+    if (raft_srv)
+        raft_free(raft_srv);
+}

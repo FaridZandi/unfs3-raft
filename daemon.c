@@ -95,7 +95,6 @@ char *my_mount_root = NULL; // Mount root for this instance
 char *logical_mount_root = NULL; // Logical mount root for this instance
 
 /* Global RPC transport handles so we can re-register services */
-// these are probably not needed anymore. TODO: remove
 static SVCXPRT *nfs_udptransp = NULL;
 static SVCXPRT *nfs_tcptransp = NULL;
 static SVCXPRT *mount_udptransp = NULL;
@@ -137,15 +136,6 @@ void logmsg(int prio, const char *fmt, ...)
 }
 
 
-static void fh_to_hex(const nfs_fh3 *fh, char *out)
-{
-    size_t len = fh->data.data_len;
-    const unsigned char *d = (const unsigned char *)fh->data.data_val;
-    size_t i;
-    for (i = 0; i < len && i < FH_MAXBUF; i++)
-        sprintf(out + i * 2, "%02x", d[i]);
-    out[i * 2] = '\0';
-}
 
 /*
  * return remote address from svc_req structure
@@ -339,10 +329,6 @@ static void parse_options(int argc, char **argv)
                 printf("\t-R <file>   path to raft log\n");
                 printf("\t-I <id>     raft node id\n");
                 printf("\t-P <ids>    comma separated raft peer ids\n");
-                // defined these in daemon.h
-                // extern char* my_mount_root; 
-                // extern char* logical_mount_root;
-                // now adding the command line options
                 printf("\t-g <path>   this replica mount root path \n");
                 printf("\t-G <path>   logical mount root path \n");
 
@@ -473,10 +459,9 @@ void daemon_exit(int error)
 
     remove_pid_file();
     backend_shutdown();
-    raft_log_close();
-    if (raft_srv)
-        raft_free(raft_srv);
 
+    raft_shutdown();
+    
     exit(1);
 }
 
@@ -1448,7 +1433,6 @@ int main(int argc, char **argv)
     was_leader = raft_is_leader(raft_srv);
     is_leader_now = was_leader;
 
-    raft_log_init(opt_raft_log);
     
     /* init write verifier */
     regenerate_write_verifier();

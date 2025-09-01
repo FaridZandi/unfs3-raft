@@ -23,9 +23,11 @@ typedef struct raft_client_info {
 // main functions for initializing and running Raft 
 void raft_init(void);
 
+void raft_shutdown(void);
+
 void wait_for_leader(void);
 
-void raft_net_receive(void);
+void raft_make_progress(void);  
 
 void print_leader_info(void);
 
@@ -36,7 +38,7 @@ char* raft_serialize_and_replicate_nfs_op(struct svc_req *rqstp,
                                          xdrproc_t _xdr_argument, 
                                          void *argument);
 
-void raft_make_progress();  
+
 
 
 // some helper functions for debugging
