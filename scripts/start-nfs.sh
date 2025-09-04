@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 
-
 set -euo pipefail
 
 NUM=${1:-3}                  # how many daemons
@@ -47,7 +46,7 @@ peer_list () {
     echo "${list%,}"
 }
 
-for i in $(seq 0 "$NUM"); do
+for i in $(seq 1 "$NUM"); do
     echo "starting instance $i"
     instdir=$WORKDIR/inst$i
     logicalshare="$MOUNT_BASE/shared"
@@ -86,52 +85,47 @@ for i in $(seq 0 "$NUM"); do
         sudo chown -R $USER:$GROUP "$share"
     fi
 
+    # set up exports file
     echo "$share $CLIENT_IP($MOUNT_OPTIONS)" > "$exports"
 
     # -------------------------------------------------------------------------
     # RAFT parameters
     # -------------------------------------------------------------------------
+    node_id=$i
+    peers=$(peer_list "$i" "$NUM")
 
-    # only if i > 1 
-    if [[ $i -eq 0 ]]; then
-        echo "[*] global instance, skipping raft setup"
+    echo "[*] inst$i: launching UNFS3 on ports nfs=$nfs_port  mount=$mnt_port"
+    echo "            raft: id=$node_id  peers=$peers"
+    
+    cmd_args=(
+        -d # run in the foreground
+        -p # disable portmapper
+        -e "$exports" # exports file if normal instance
+        -i "$pidfile" # pid file to help stop the instance later 
+        -n "$nfs_port" # NFS port
+        -m "$mnt_port" # mount port
+        -R "$raft" # all raft logs will permanently be here
+        -I "$node_id" # node ID for RAFT. unique per instance
+        -P "$peers" # peer list for RAFT (comma-separated IDs of other nodes)
+        -g "$MOUNT_BASE" # mount root for this instance
+        -G "$logicalshare" # logical mount root for this instance
+        -g "$share" # mount root for this instance
+    )
+
+    if [[ $USE_GDB -eq 1 ]]; then
+        echo "[*] inst$i: running under gdb and run"
+        gdb -ex run -ex "bt" --args ../unfsd "${cmd_args[@]}" > "$instdir/unfsd.out" 2>&1 &
     else
-        node_id=$i
-        peers=$(peer_list "$i" "$NUM")
-
-        echo "[*] inst$i: launching UNFS3 on ports nfs=$nfs_port  mount=$mnt_port"
-        echo "            raft: id=$node_id  peers=$peers"
-        
-        cmd_args=(
-            -d # run in the foreground
-            -p # disable portmapper
-            -e "$exports" # exports file if normal instance
-            -i "$pidfile" # pid file to help stop the instance later 
-            -n "$nfs_port" # NFS port
-            -m "$mnt_port" # mount port
-            -R "$raft" # all raft logs will permanently be here
-            -I "$node_id" # node ID for RAFT. unique per instance
-            -P "$peers" # peer list for RAFT (comma-separated IDs of other nodes)
-            -G "$logicalshare" # logical mount root for this instance
-            -g "$share" # mount root for this instance
-        )
-
-        if [[ $USE_GDB -eq 1 ]]; then
-            echo "[*] inst$i: running under gdb and run"
-            gdb -ex run -ex "bt" --args ../unfsd "${cmd_args[@]}" > "$instdir/unfsd.out" 2>&1 &
-        else
-            echo "running the command:"
-            echo "  ../unfsd ${cmd_args[*]} > $instdir/unfsd.out 2>&1 &"
-
-            ../unfsd "${cmd_args[@]}" > "$instdir/unfsd.out" 2>&1 &
-        fi
-
-        echo $! >> "$GLOBAL_PIDLIST"
-        this_pid=$!
-        echo "    inst$i OK  →  share=$share, 
-                  pid=$this_pid, 
-                  exports=$exports"  
+        echo "running the command:"
+        echo "  ../unfsd ${cmd_args[*]} > $instdir/unfsd.out 2>&1 &"
+        ../unfsd "${cmd_args[@]}" > "$instdir/unfsd.out" 2>&1 &
     fi
+
+    echo $! >> "$GLOBAL_PIDLIST"
+    this_pid=$!
+    echo "    inst$i OK  →  share=$share, 
+                pid=$this_pid, 
+                exports=$exports"  
 done
 
 echo
