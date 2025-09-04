@@ -22,7 +22,6 @@ MOUNT_IMAGE=True
 echo "making unfs3-raft executable"
 cd ..
 make
-sudo make install
 cd "$WORKDIR"
 
 USE_GDB=0
@@ -119,12 +118,12 @@ for i in $(seq 0 "$NUM"); do
 
         if [[ $USE_GDB -eq 1 ]]; then
             echo "[*] inst$i: running under gdb and run"
-            gdb -ex run -ex "bt" --args unfsd "${cmd_args[@]}" > "$instdir/unfsd.out" 2>&1 &
+            gdb -ex run -ex "bt" --args ../unfsd "${cmd_args[@]}" > "$instdir/unfsd.out" 2>&1 &
         else
             echo "running the command:"
-            echo "  unfsd ${cmd_args[*]} > $instdir/unfsd.out 2>&1 &"
+            echo "  ../unfsd ${cmd_args[*]} > $instdir/unfsd.out 2>&1 &"
 
-            unfsd "${cmd_args[@]}" > "$instdir/unfsd.out" 2>&1 &
+            ../unfsd "${cmd_args[@]}" > "$instdir/unfsd.out" 2>&1 &
         fi
 
         echo $! >> "$GLOBAL_PIDLIST"
