@@ -1,31 +1,38 @@
 set -euo pipefail
 
+mode=ext2  # choose between "ext2" or "ext4"
+clientpath=/home/faridzandi/git/NfsClient-raft
 script_dir=$(realpath "$(dirname "$0")")
 echo "grading in $script_dir"   
-
 grade_results_path="$script_dir/grade_results/"
-mkdir -p "$grade_results_path"
-
-clientpath=/home/faridzandi/git/NfsClient-raft
-
-./start-nfs-ext2.sh 5
-
-cd $clientpath
-
-python setup.py install
-
-cd tests
-
 test_results_path="$grade_results_path/test_raft.txt"
+
+mkdir -p "$grade_results_path"
 rm -f $test_results_path
 touch $test_results_path
+
+
+
+
+./start-nfs.sh 5 $mode 1024
+
+
+cd $clientpath
+python setup.py install
+
+
+cd tests
 
 # wait for the election to settle
 echo "waiting for 2 seconds to let the election settle"
 sleep 2
 
+
+
 echo "running tests, output in $test_results_path"
 python -u main-a.py --file-count 20 --loop-delay 0.5 | tee -a "$test_results_path" &
+
+
 
 echo "waiting for 10 seconds to let tests start"
 sleep 5
@@ -36,7 +43,6 @@ sleep 5
 replica1_pid=$(cat $script_dir/inst1/unfsd.pid)
 echo "making replica 1 unresponsive"
 kill -SIGUSR2 $replica1_pid
-
 
 # wait for a bit
 sleep 5
@@ -53,4 +59,8 @@ echo "Tests finished. Press Enter to stop nfs and clean up"
 read -r
 
 cd $script_dir
-./stop-nfs-ext2.sh
+if [[ $mode == "ext2" ]]; then
+    ./stop-nfs-ext2.sh
+else
+    sudo ./stop-nfs-ext4.sh
+fi

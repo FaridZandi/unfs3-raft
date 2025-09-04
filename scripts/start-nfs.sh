@@ -1,40 +1,49 @@
 #!/usr/bin/env bash
-
 set -euo pipefail
 
+# ---------------- CONFIG ----------------
 NUM=${1:-3}                  # how many daemons
-SIZE=${2:-1024}              # size of each image (MiB)
+MODE=${2:-ext2}              # ext2 or ext4
+SIZE=${3:-1024}              # size of each image (MiB)
 
-WORKDIR=$(pwd)               # where the script is run
+MOUNT_IMAGE=True
+USE_GDB=0
+# ----------------------------------------
+USER=$(id -un) # user who ran the script
+GROUP=$(id -gn "$USER")  # group of the user who ran the script
+CLIENT_IP=localhost
+MOUNT_OPTIONS="rw,removable,insecure"
+WORKDIR=$(pwd)                # where the script is run
 MOUNT_BASE=~/srv/nfs          # parent for visible shares
-GLOBAL_PIDLIST=$WORKDIR/unfsd_all.pids
-: > "$GLOBAL_PIDLIST"        # truncate old list
+nfs_port=2049
+mnt_port=2049
 
-echo "removing all the folowing directories:"
+echo "USER=$USER, GROUP=$GROUP, CLIENT_IP=$CLIENT_IP"
+echo "MODE=$MODE"
+echo "MOUNT_IMAGE=$MOUNT_IMAGE"
+echo "NUM=$NUM, SIZE=${SIZE}MiB"
+echo "WORKDIR=$WORKDIR"
+echo "MOUNT_BASE=$MOUNT_BASE"
+echo "nfs_port=$nfs_port, mnt_port=$mnt_port"
+# ----------------------------------------
+
+
+GLOBAL_PIDLIST=$WORKDIR/unfsd_all.pids
+: > "$GLOBAL_PIDLIST"         # truncate old list
+
+echo "removing all the following directories:"
 echo "  $WORKDIR/inst*"
 rm -rf inst*
 
 mkdir -p "$MOUNT_BASE"
-
-MOUNT_IMAGE=True
 
 echo "making unfs3-raft executable"
 cd ..
 make
 cd "$WORKDIR"
 
-USE_GDB=0
 
-USER=`id -un`  # user who ran the script
-GROUP=`id -gn $USER`  # group of the user who ran the script
-CLIENT_IP=localhost
-MOUNT_OPTIONS="rw,removable,insecure"
 
-echo "USER=$USER, GROUP=$GROUP, CLIENT_IP=$CLIENT_IP"
-
-################################################################################
-# Helper: build a comma-separated list of all IDs except $1
-################################################################################
 peer_list () {
     local self=$1 total=$2
     local list=""
@@ -42,9 +51,11 @@ peer_list () {
         [[ $j -eq $self ]] && continue
         list+="${j},"
     done
-    # trim trailing comma
     echo "${list%,}"
 }
+
+
+# if mount image is not needed, skip the setup
 
 for i in $(seq 1 "$NUM"); do
     echo "starting instance $i"
@@ -59,9 +70,9 @@ for i in $(seq 1 "$NUM"); do
     raft=$instdir/raft.log
     pidfile=$instdir/unfsd.pid
 
-    nfs_port=2049 # $((2050 + i - 1))
-    mnt_port=2049 # $((2050 + i - 1))
-
+    # -------------------------------------------------------------------------
+    # Set up image and mount point
+    # -------------------------------------------------------------------------
     mkdir -p "$share"
     sudo chown $USER:$GROUP "$share"
 
@@ -75,14 +86,23 @@ for i in $(seq 1 "$NUM"); do
         # create image if it does not exist
         echo "[*] inst$i: creating ${SIZE} MiB image"
         truncate -s "${SIZE}M" "$img"
-        mkfs.ext4 -q "$img"
 
-        echo "[*] inst$i: mounting image to $share"
-        loopdev=$(sudo losetup -f)
-        sudo losetup "$loopdev" "$img"
-        sudo mount -o loop,sync "$loopdev" "$share"
-
-        sudo chown -R $USER:$GROUP "$share"
+        if [[ $MODE == "ext2" ]]; then
+            mkfs.ext2 -q "$img"
+            echo "[*] inst$i: mounting image with fuse-ext2"
+            fuse-ext2 -o rw+ -o direct_io "$img" "$share"
+            sudo chown -R $USER:$GROUP "$share"
+        elif [[ $MODE == "ext4" ]]; then
+            mkfs.ext4 -q "$img"
+            echo "[*] inst$i: mounting image with loop device"
+            loopdev=$(sudo losetup -f)
+            sudo losetup "$loopdev" "$img"
+            sudo mount -o loop,sync "$loopdev" "$share"
+            sudo chown -R $USER:$GROUP "$share"
+        else
+            echo "Unknown MODE=$MODE" >&2
+            exit 1
+        fi
     fi
 
     # set up exports file
@@ -96,7 +116,7 @@ for i in $(seq 1 "$NUM"); do
 
     echo "[*] inst$i: launching UNFS3 on ports nfs=$nfs_port  mount=$mnt_port"
     echo "            raft: id=$node_id  peers=$peers"
-    
+
     cmd_args=(
         -d # run in the foreground
         -p # disable portmapper
@@ -113,20 +133,14 @@ for i in $(seq 1 "$NUM"); do
     )
 
     if [[ $USE_GDB -eq 1 ]]; then
-        echo "[*] inst$i: running under gdb and run"
         gdb -ex run -ex "bt" --args ../unfsd "${cmd_args[@]}" > "$instdir/unfsd.out" 2>&1 &
     else
-        echo "running the command:"
-        echo "  ../unfsd ${cmd_args[*]} > $instdir/unfsd.out 2>&1 &"
         ../unfsd "${cmd_args[@]}" > "$instdir/unfsd.out" 2>&1 &
     fi
 
     echo $! >> "$GLOBAL_PIDLIST"
-    this_pid=$!
-    echo "    inst$i OK  →  share=$share, 
-                pid=$this_pid, 
-                exports=$exports"  
+    echo "    inst$i OK  →  share=$share, pid=$!, exports=$exports"
 done
 
 echo
-echo "All $NUM instances are up.  Global PID list: $GLOBAL_PIDLIST"
+echo "All $NUM instances are up. Global PID list: $GLOBAL_PIDLIST"
