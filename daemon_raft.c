@@ -1427,6 +1427,8 @@ static int raft_applylog_cb(raft_server_t* raft,
                                     (char*)entry->data.buf + offset,
                                     entry->data.len - offset);
 
+    logmsg(LOG_CRIT, "result of operation: %p", result);
+    
     /* Store the result for later retrieval by the client facing function. A simple example
      * here using a ring buffer. replace with something more sophisticated later on. */
     put_result(entry_idx, result);

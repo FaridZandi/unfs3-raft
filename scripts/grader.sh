@@ -1,7 +1,7 @@
 set -euo pipefail
 
 mode=ext2  # choose between "ext2" or "ext4"
-clientpath=/home/faridzandi/git/NfsClient-raft
+clientpath=/h/u15/t1/00/t1zandis/git/NfsClient-raft/
 script_dir=$(realpath "$(dirname "$0")")
 echo "grading in $script_dir"   
 grade_results_path="$script_dir/grade_results/"
@@ -11,14 +11,10 @@ mkdir -p "$grade_results_path"
 rm -f $test_results_path
 touch $test_results_path
 
-
-
-
-./start-nfs.sh 5 $mode 1024
-
+./start-nfs.sh 5 $mode 4
 
 cd $clientpath
-python setup.py install
+python3.12 setup.py install --user
 
 
 cd tests
@@ -30,7 +26,7 @@ sleep 2
 
 
 echo "running tests, output in $test_results_path"
-python -u main-a.py --file-count 20 --loop-delay 0.5 | tee -a "$test_results_path" &
+python3.12 -u main-a.py --file-count 20 --loop-delay 0.5 --mount-path /tmp/farid/srv/nfs/shared | tee -a "$test_results_path" &
 
 
 

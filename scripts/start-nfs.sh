@@ -4,21 +4,24 @@ set -euo pipefail
 # ---------------- CONFIG ----------------
 NUM=${1:-3}                  # how many daemons
 MODE=${2:-ext2}              # ext2 or ext4
-SIZE=${3:-1024}              # size of each image (MiB)
+SIZE=${3:-4}              # size of each image (MiB)
 
 MOUNT_IMAGE=True
 USE_GDB=0
 # ----------------------------------------
 USER=$(id -un) # user who ran the script
 GROUP=$(id -gn "$USER")  # group of the user who ran the script
+uid=$(id -u "$USER")                  # or just: id -u
+gid=$(id -g "$USER")   # or your primary group: id -g
 CLIENT_IP=localhost
 MOUNT_OPTIONS="rw,removable,insecure"
 WORKDIR=$(pwd)                # where the script is run
-MOUNT_BASE=~/srv/nfs          # parent for visible shares
+MOUNT_BASE=/tmp/farid/srv/nfs          # parent for visible shares
 nfs_port=2049
 mnt_port=2049
 
 echo "USER=$USER, GROUP=$GROUP, CLIENT_IP=$CLIENT_IP"
+echo "uid=$uid, gid=$gid"
 echo "MODE=$MODE"
 echo "MOUNT_IMAGE=$MOUNT_IMAGE"
 echo "NUM=$NUM, SIZE=${SIZE}MiB"
@@ -74,7 +77,7 @@ for i in $(seq 1 "$NUM"); do
     # Set up image and mount point
     # -------------------------------------------------------------------------
     mkdir -p "$share"
-    sudo chown $USER:$GROUP "$share"
+    # sudo chown $USER:$GROUP "$share"
 
     # if mount image is not needed, skip the setup
     if [[ $MOUNT_IMAGE == False ]]; then
@@ -88,10 +91,10 @@ for i in $(seq 1 "$NUM"); do
         truncate -s "${SIZE}M" "$img"
 
         if [[ $MODE == "ext2" ]]; then
-            mkfs.ext2 -q "$img"
+            mkfs.ext2 -q -E root_owner=${uid}:${gid} "$img"
             echo "[*] inst$i: mounting image with fuse-ext2"
             fuse-ext2 -o rw+ -o direct_io "$img" "$share"
-            sudo chown -R $USER:$GROUP "$share"
+            # sudo chown -R $USER:$GROUP "$share"
         elif [[ $MODE == "ext4" ]]; then
             mkfs.ext4 -q "$img"
             echo "[*] inst$i: mounting image with loop device"

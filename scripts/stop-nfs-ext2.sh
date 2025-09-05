@@ -8,7 +8,7 @@ set -euo pipefail
 WORKDIR=$(pwd)
 # user_home=$(eval echo "~$SUDO_USER")  # home of the user who ran the script
 # MOUNT_BASE="$user_home/srv/nfs"        # parent for visible shares
-MOUNT_BASE=~/srv/nfs          # parent for visible shares
+MOUNT_BASE=/tmp/farid/srv/nfs          # parent for visible shares
 
 
 for pidfile in "$WORKDIR"/inst*/unfsd.pid; do
