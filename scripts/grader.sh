@@ -6,6 +6,7 @@ script_dir=$(realpath "$(dirname "$0")")
 echo "grading in $script_dir"   
 grade_results_path="$script_dir/grade_results/"
 test_results_path="$grade_results_path/test_raft.txt"
+MOUNT_PATH=/tmp/farid/srv/nfs/shared
 
 mkdir -p "$grade_results_path"
 rm -f $test_results_path
@@ -26,7 +27,7 @@ sleep 2
 
 
 echo "running tests, output in $test_results_path"
-python3.12 -u main-a.py --file-count 20 --loop-delay 0.5 --mount-path /tmp/farid/srv/nfs/shared | tee -a "$test_results_path" &
+python3.12 -u main-a.py --file-count 20 --loop-delay 0.5 --mount-path $MOUNT_PATH | tee -a "$test_results_path" &
 
 
 

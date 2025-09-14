@@ -666,7 +666,7 @@ static void nfs3_program_3(struct svc_req *rqstp, register SVCXPRT * transp)
     logmsg(LOG_CRIT, "received operation %s", nfs3_proc_name(rqstp->rq_proc));
 
     switch (rqstp->rq_proc) {
-        case NFSPROC3_LOOKUP:
+        // case NFSPROC3_LOOKUP:
         case NFSPROC3_READLINK:
         case NFSPROC3_READDIR:
         case NFSPROC3_READDIRPLUS:

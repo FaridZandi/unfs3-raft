@@ -72,8 +72,11 @@ void put_result(raft_index_t op_index, char *data) {
 
     write_pos = (write_pos + 1) % CAPACITY;
     if (write_pos == read_pos) { 
-        logmsg(LOG_CRIT, "Result buffer overflow, exiting ...");
-        exit(1);
+        // overwrite the oldest, this should help retaining the most recent results. 
+        // I don't have a proof, but I think we should only need 2 results at most.
+        // using 1000 as a safety margin.
+
+        read_pos = (read_pos + 1) % CAPACITY; 
     }
 }
 
@@ -142,9 +145,6 @@ const char *mountproc_name(u_long proc)
 // Prints the contents of 'buf' as hex, 'len' bytes, with 'bytes_per_line' bytes per line.
 void print_buffer_hex(const void *buf, size_t len, const char *label)
 {
-    return;
-
-
     const int bytes_per_line = 16; // Change this to adjust how many bytes per line
 
     const unsigned char *p = (const unsigned char *)buf;
@@ -1194,7 +1194,7 @@ static char* apply_nfs_operation(uint32_t proc, raft_client_info_t *info, char* 
             return;
     }
 
-    print_buffer_hex(buf, len, "apply_nfs_operation: received buffer");
+    // print_buffer_hex(buf, len, "apply_nfs_operation: received buffer");
 
     memset(&argument, 0, sizeof(argument));
     XDR xdrs;
@@ -1396,7 +1396,7 @@ static int raft_applylog_cb(raft_server_t* raft,
 
     size_t offset = 0;
 
-    print_buffer_hex(entry->data.buf, entry->data.len, "raft: apply log data");
+    // print_buffer_hex(entry->data.buf, entry->data.len, "raft: apply log data");
 
     // Deserialize proc
     uint32_t proc;
@@ -1423,12 +1423,18 @@ static int raft_applylog_cb(raft_server_t* raft,
            (unsigned long)entry_idx, nfs3_proc_name(proc));
 
     char* result = apply_nfs_operation(proc,
-                                    &info,
-                                    (char*)entry->data.buf + offset,
-                                    entry->data.len - offset);
+                                       &info,
+                                       (char*)entry->data.buf + offset,
+                                       entry->data.len - offset);
 
-    logmsg(LOG_CRIT, "result of operation: %p", result);
-    
+    // try writing the contents of result, not the address
+    logmsg(LOG_CRIT, "raft: apply log result ptr %p", result);
+    if (result) {
+        print_buffer_hex((uint8_t*)result, strlen(result), "raft: apply log result");
+    } else {
+        logmsg(LOG_CRIT, "raft: apply log result is NULL");
+    }
+
     /* Store the result for later retrieval by the client facing function. A simple example
      * here using a ring buffer. replace with something more sophisticated later on. */
     put_result(entry_idx, result);
@@ -1444,6 +1450,7 @@ void raft_init(void) {
     clock_gettime(CLOCK_MONOTONIC, &last_progress_time);
     raft_srv = raft_new();
     raft_log_init(opt_raft_log);
+    init_local_handle(); 
 
     // set raft callbacks
     raft_cbs.send_requestvote = raft_send_requestvote_cb;
