@@ -16,7 +16,7 @@ gid=$(id -g "$USER")   # or your primary group: id -g
 CLIENT_IP=localhost
 MOUNT_OPTIONS="rw,removable,insecure"
 WORKDIR=$(pwd)                # where the script is run
-MOUNT_BASE=/tmp/farid/srv/nfs          # parent for visible shares
+MOUNT_BASE=/tmp/$USERNAME/srv/nfs          # parent for visible shares
 nfs_port=2049
 mnt_port=2049
 

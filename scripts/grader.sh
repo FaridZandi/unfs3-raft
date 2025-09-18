@@ -1,12 +1,12 @@
 set -euo pipefail
 
 mode=ext2  # choose between "ext2" or "ext4"
-clientpath=/h/u15/t1/00/t1zandis/git/NfsClient-raft/
+clientpath=client
 script_dir=$(realpath "$(dirname "$0")")
 echo "grading in $script_dir"   
 grade_results_path="$script_dir/grade_results/"
 test_results_path="$grade_results_path/test_raft.txt"
-MOUNT_PATH=/tmp/farid/srv/nfs/shared
+MOUNT_PATH=/tmp/$USERNAME/srv/nfs/shared
 
 mkdir -p "$grade_results_path"
 rm -f $test_results_path

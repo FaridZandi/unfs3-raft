@@ -8,7 +8,7 @@ set -euo pipefail
 WORKDIR=$(pwd)
 # user_home=$(eval echo "~$SUDO_USER")  # home of the user who ran the script
 # MOUNT_BASE="$user_home/srv/nfs"        # parent for visible shares
-MOUNT_BASE=/tmp/farid/srv/nfs          # parent for visible shares
+MOUNT_BASE=/tmp/$USERNAME/srv/nfs          # parent for visible shares
 
 
 for pidfile in "$WORKDIR"/inst*/unfsd.pid; do
@@ -68,6 +68,10 @@ echo "removing: "
 find "$WORKDIR" -maxdepth 1 -type d -name 'inst*' -print
 rm -rf "$WORKDIR"/inst*
 rm -rf "$WORKDIR"/global
+
+killall -9 unfsd || true
+killall -9 fuse-ext2 || true
+
 
 echo "All UNFS3 instances stopped and cleaned up."
 echo "You can now safely run ./start-nfs.sh to start fresh instances."
